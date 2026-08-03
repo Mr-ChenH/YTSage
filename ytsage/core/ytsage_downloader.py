@@ -70,8 +70,8 @@ class DownloadThread(QThread):
         geo_proxy_url=None,
         force_output_format=False,
         preferred_output_format="mp4",
-        force_audio_format=False,
-        preferred_audio_format="best",
+        force_audio_format=True,
+        preferred_audio_format="mp3",
         audio_normalization=False,
         filename_format=None,
         concurrent_fragments=1,
@@ -294,8 +294,15 @@ class DownloadThread(QThread):
                 cmd.extend(["--merge-output-format", self.preferred_output_format])
                 logger.debug(f"Using --merge-output-format to force merged format to: {self.preferred_output_format}")
 
-        # Force audio format conversion for audio-only downloads
-        if self.is_audio_only and self.force_audio_format:
+        # Convert audio-only downloads when requested or when a concrete target format is selected.
+        should_convert_audio = (
+            self.is_audio_only
+            and (
+                self.force_audio_format
+                or (self.preferred_audio_format and self.preferred_audio_format != "best")
+            )
+        )
+        if should_convert_audio:
             cmd.append("--extract-audio")
             if self.preferred_audio_format and self.preferred_audio_format != "best":
                 cmd.extend(["--audio-format", self.preferred_audio_format])
@@ -309,7 +316,7 @@ class DownloadThread(QThread):
             # If the user selected "Best (No conversion)", yt-dlp attempts to stream copy (-c:a copy),
             # which will cause FFmpeg to crash with "Invalid argument".
             # We fix this by forcing an explicit actual conversion (mp3) if no format was forced.
-            if not self.force_audio_format or self.preferred_audio_format == "best":
+            if not should_convert_audio or self.preferred_audio_format == "best":
                 if "--extract-audio" not in cmd:
                     cmd.append("--extract-audio")
                 cmd.extend(["--audio-format", "mp3"])

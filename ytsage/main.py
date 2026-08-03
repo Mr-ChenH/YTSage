@@ -1,4 +1,19 @@
+import os
 import sys
+
+
+def _configure_qt_logging() -> None:
+    """Suppress noisy Qt font database warnings while preserving other Qt logs."""
+    font_db_rule = "qt.text.font.db=false"
+    existing_rules = os.environ.get("QT_LOGGING_RULES")
+    if existing_rules:
+        if font_db_rule not in existing_rules.split(";"):
+            os.environ["QT_LOGGING_RULES"] = f"{existing_rules};{font_db_rule}"
+    else:
+        os.environ["QT_LOGGING_RULES"] = font_db_rule
+
+
+_configure_qt_logging()
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 

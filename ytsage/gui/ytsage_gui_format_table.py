@@ -5,6 +5,7 @@ from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QHeaderView, QSizePolicy, QTableWidget, QTableWidgetItem, QWidget
 
 from ..utils.ytsage_localization import _
+from ..utils.ytsage_logger import logger
 
 if TYPE_CHECKING:
     from .ytsage_gui_main import YTSageApp
@@ -49,6 +50,14 @@ class FormatTableMixin:
                 codec_str += f" {int(abr)}kbps"
         
         return codec_str
+
+    def _get_filesize_display(self, format_info: dict) -> str:
+        """Return a readable file size, tolerating extractors that omit it."""
+        filesize = format_info.get("filesize") or format_info.get("filesize_approx")
+        if not isinstance(filesize, (int, float)) or filesize <= 0:
+            return "N/A"
+
+        return f"{filesize / 1024 / 1024:.2f} MB"
 
     def _apply_column_widths(self, header_labels: list[str], is_playlist_mode: bool = False) -> None:
         """Apply responsive column widths to format table."""
@@ -215,11 +224,49 @@ class FormatTableMixin:
         show_video = hasattr(self, "video_button") and self.video_button.isChecked()  # type: ignore[reportAttributeAccessIssue]
         show_audio = hasattr(self, "audio_button") and self.audio_button.isChecked()  # type: ignore[reportAttributeAccessIssue]
 
+        if self.format_table.rowCount() != len(self._row_format_type):
+            logger.warning(
+                "Format table row/type mismatch; rebuilding before filtering "
+                f"(rows={self.format_table.rowCount()}, types={len(self._row_format_type)})"
+            )
+            self._table_built = False
+            self._build_full_format_table()
+            return
+
         for row, format_type in enumerate(self._row_format_type):
             if format_type == "video":
                 self.format_table.setRowHidden(row, not show_video)
             else:  # audio
                 self.format_table.setRowHidden(row, not show_audio)
+
+        self._ensure_visible_format_selected(show_video=show_video, show_audio=show_audio)
+
+    def _ensure_visible_format_selected(self, show_video: bool, show_audio: bool) -> None:
+        """Keep selection aligned with the active Video/Audio filter."""
+        self = cast("YTSageApp", self)
+
+        selected_visible = False
+        for row, checkbox in enumerate(self.format_checkboxes):
+            if row >= len(self._row_format_type):
+                break
+            format_type = self._row_format_type[row]
+            is_visible_type = (format_type == "video" and show_video) or (format_type == "audio" and show_audio)
+            if checkbox.isChecked() and is_visible_type:
+                selected_visible = True
+                break
+
+        if selected_visible:
+            return
+
+        for row, checkbox in enumerate(self.format_checkboxes):
+            if row >= len(self._row_format_type):
+                break
+            format_type = self._row_format_type[row]
+            is_visible_type = (format_type == "video" and show_video) or (format_type == "audio" and show_audio)
+            if is_visible_type:
+                checkbox.setChecked(True)
+                self.handle_checkbox_click(checkbox)
+                return
 
     def _build_full_format_table(self) -> None:
         """Build the complete format table once with all formats."""
@@ -231,7 +278,7 @@ class FormatTableMixin:
         self._row_format_type.clear()
 
         # Separate and filter formats
-        video_formats = [f for f in self.all_formats if f.get("vcodec") != "none" and f.get("filesize") is not None]
+        video_formats = [f for f in self.all_formats if f.get("vcodec") != "none"]
         audio_formats = [
             f
             for f in self.all_formats
@@ -311,11 +358,6 @@ class FormatTableMixin:
             self.format_table.setColumnCount(6)
             header_labels = [_("formats.select"), _("formats.quality"), _("formats.resolution"), _("formats.fps"), _("formats.hdr"), _("formats.audio")]
             self.format_table.setHorizontalHeaderLabels(header_labels)
-
-            # Configure column visibility and resizing for playlist mode
-            self.format_table.setColumnHidden(6, True)
-            self.format_table.setColumnHidden(7, True)
-            self.format_table.setColumnHidden(8, True)
 
             # Apply responsive column widths for playlist mode
             self._apply_column_widths(header_labels, is_playlist_mode=True)
@@ -472,7 +514,7 @@ class FormatTableMixin:
                 self.format_table.setItem(row, 3, QTableWidgetItem(resolution))
 
                 # Column 4: File Size
-                filesize = f"{f.get('filesize', 0) / 1024 / 1024:.2f} MB"
+                filesize = self._get_filesize_display(f)
                 self.format_table.setItem(row, 4, QTableWidgetItem(filesize))
 
                 # Column 5: Codec

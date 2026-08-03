@@ -321,8 +321,12 @@ class DownloadSettingsDialog(QDialog):
         audio_format_layout = QVBoxLayout()
 
         # Load current audio format settings from ConfigManager
-        self.force_audio_format_enabled = ConfigManager.get("force_audio_format") or False
-        self.preferred_audio_format_value = ConfigManager.get("preferred_audio_format") or "best"
+        self.force_audio_format_enabled = ConfigManager.get("force_audio_format")
+        if self.force_audio_format_enabled is None:
+            self.force_audio_format_enabled = True
+        self.preferred_audio_format_value = ConfigManager.get("preferred_audio_format") or "mp3"
+        if self.preferred_audio_format_value != "best":
+            self.force_audio_format_enabled = True
         self.audio_normalization_enabled = ConfigManager.get("audio_normalization") or False
 
         # Enable/Disable force audio format checkbox
@@ -374,6 +378,7 @@ class DownloadSettingsDialog(QDialog):
         # Connect signals
         self.audio_normalization_checkbox.stateChanged.connect(self._on_audio_normalization_toggled)
         self.force_audio_format_checkbox.stateChanged.connect(self._on_force_audio_format_toggled)
+        self.audio_format_combo.currentIndexChanged.connect(self._on_audio_format_changed)
 
         audio_format_group_box.setLayout(audio_format_layout)
         format_layout.addWidget(audio_format_group_box)
@@ -493,8 +498,16 @@ class DownloadSettingsDialog(QDialog):
     def _on_force_audio_format_toggled(self, state: int) -> None:
         """Handle logic when force audio format is toggled."""
         if state == Qt.CheckState.Unchecked.value:
-            # If re-encoding is disabled, normalization cannot happen
+            # If re-encoding is disabled, normalization cannot happen and format stays native.
             self.audio_normalization_checkbox.setChecked(False)
+            self.audio_format_combo.setCurrentIndex(0)
+        elif self.audio_format_combo.currentIndex() == 0:
+            self.audio_format_combo.setCurrentIndex(2)
+
+    def _on_audio_format_changed(self, index: int) -> None:
+        """Selecting a concrete audio format implies conversion is enabled."""
+        if index != 0 and not self.force_audio_format_checkbox.isChecked():
+            self.force_audio_format_checkbox.setChecked(True)
 
     def browse_new_path(self) -> None:
         new_path = QFileDialog.getExistingDirectory(self, _("dialogs.select_folder"), str(self.current_path))

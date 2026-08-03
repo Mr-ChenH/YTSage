@@ -257,8 +257,9 @@ class YTSageApp(QMainWindow, FormatTableMixin, VideoInfoMixin, AnalysisMixin):  
         # Initialize output format settings
         self.force_output_format = ConfigManager.get("force_output_format") or False
         self.preferred_output_format = ConfigManager.get("preferred_output_format") or "mp4"
-        self.force_audio_format = ConfigManager.get("force_audio_format") or False
-        self.preferred_audio_format = ConfigManager.get("preferred_audio_format") or "best"
+        force_audio_format = ConfigManager.get("force_audio_format")
+        self.force_audio_format = True if force_audio_format is None else force_audio_format
+        self.preferred_audio_format = ConfigManager.get("preferred_audio_format") or "mp3"
         self.audio_normalization = ConfigManager.get("audio_normalization") or False
         
         generic_val = ConfigManager.get("generic_mode")
@@ -282,12 +283,12 @@ class YTSageApp(QMainWindow, FormatTableMixin, VideoInfoMixin, AnalysisMixin):  
         self.signals.update_progress.connect(self.update_progress_bar)
 
         # After adding format buttons
-        self.video_button.clicked.connect(self.filter_formats)  # Connect video button
-        self.audio_button.clicked.connect(self.filter_formats)  # Connect audio button
+        self.video_button.toggled.connect(lambda checked: checked and self.filter_formats())
+        self.audio_button.toggled.connect(lambda checked: checked and self.filter_formats())
 
         # Add connections to handle video/audio mode-specific controls
-        self.video_button.clicked.connect(self.handle_mode_change)
-        self.audio_button.clicked.connect(self.handle_mode_change)
+        self.video_button.toggled.connect(lambda checked: checked and self.handle_mode_change())
+        self.audio_button.toggled.connect(lambda checked: checked and self.handle_mode_change())
 
         # Initialize UI state based on current mode
         self.handle_mode_change()
