@@ -34,6 +34,21 @@ def ensure_runtime_dependencies() -> None:
     ensure_ffmpeg()
 
 
+def update_runtime_dependencies() -> dict[str, str]:
+    """Upgrade managed runtime dependencies and refresh cached command info."""
+    results: dict[str, str] = {}
+    results["yt_dlp"] = "updated" if _pip_install("yt-dlp --upgrade", timeout=240) else "failed"
+    results["ffmpeg"] = "updated" if _pip_install("imageio-ffmpeg --upgrade", timeout=300) else "failed"
+    clear_dependency_cache()
+    ytdlp = get_ytdlp_info()
+    ffmpeg = get_ffmpeg_info()
+    if ytdlp is not None:
+        results["yt_dlp_version"] = ytdlp.version
+    if ffmpeg is not None:
+        results["ffmpeg_version"] = ffmpeg.version
+    return results
+
+
 def ensure_ytdlp() -> CommandInfo | None:
     info = get_ytdlp_info()
     if info is not None:
@@ -127,7 +142,7 @@ def clear_dependency_cache() -> None:
 
 def _pip_install(package: str, timeout: int) -> bool:
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", package],
+        [sys.executable, "-m", "pip", "install", *package.split()],
         capture_output=True,
         text=True,
         check=False,

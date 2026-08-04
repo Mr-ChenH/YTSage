@@ -140,6 +140,12 @@ def list_files(root: Path, request: Request, query: str | None = None, folder: s
     )
 
 
+def ranged_download_response(path: Path, range_header: str | None) -> StreamingResponse:
+    filename = urllib.parse.quote(path.name)
+    extra_headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"}
+    return _range_response(path, range_header, extra_headers=extra_headers)
+
+
 def download_response(path: Path) -> FileResponse:
     return FileResponse(path, filename=path.name, media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream")
 
@@ -224,7 +230,10 @@ def folder_manifest_response(root: Path, folder: Path, archive_name: str, reques
         media_type = "text/plain; charset=utf-8"
         extension = "txt"
     else:
-        content = "\n".join(f'{entry["url"]}\n  out={entry["output"]}' for entry in entries) + ("\n" if entries else "")
+        content = "\n".join(
+            f'{entry["url"]}\n  out={entry["output"]}\n  split=8\n  max-connection-per-server=8\n  continue=true'
+            for entry in entries
+        ) + ("\n" if entries else "")
         media_type = "text/plain; charset=utf-8"
         extension = "aria2.txt"
 
@@ -246,11 +255,12 @@ def _file_iterator(path: Path, start: int, end: int, chunk_size: int = 1024 * 10
             yield chunk
 
 
-def stream_response(path: Path, range_header: str | None) -> StreamingResponse:
+def _range_response(path: Path, range_header: str | None, extra_headers: dict[str, str] | None = None) -> StreamingResponse:
     size = path.stat().st_size
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    base_headers = {"Accept-Ranges": "bytes", **(extra_headers or {})}
     if not range_header:
-        headers = {"Accept-Ranges": "bytes", "Content-Length": str(size)}
+        headers = {**base_headers, "Content-Length": str(size)}
         return StreamingResponse(_file_iterator(path, 0, size - 1), media_type=media_type, headers=headers)
 
     if not range_header.startswith("bytes="):
@@ -273,8 +283,12 @@ def stream_response(path: Path, range_header: str | None) -> StreamingResponse:
         raise HTTPException(status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE, detail="Requested range not satisfiable")
 
     headers = {
-        "Accept-Ranges": "bytes",
+        **base_headers,
         "Content-Range": f"bytes {start}-{end}/{size}",
         "Content-Length": str(end - start + 1),
     }
     return StreamingResponse(_file_iterator(path, start, end), status_code=206, media_type=media_type, headers=headers)
+
+
+def stream_response(path: Path, range_header: str | None) -> StreamingResponse:
+    return _range_response(path, range_header)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -12,14 +14,26 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import ServerConfig, load_config
-from .models import AnalyzeRequest, AnalyzeResponse, CookieSaveRequest, CookieSaveResponse, CreateTaskRequest, HealthResponse, SettingsResponse, TaskResponse
+from .models import AnalyzeRequest, AnalyzeResponse, CookieSaveRequest, CookieSaveResponse, CreateTaskRequest, DependencyUpdateResponse, FilenameTemplateSaveRequest, HealthResponse, SettingsResponse, TaskResponse
 from .services import analyzer
 from .services.auth import require_auth, require_websocket_auth
 from .services.cookies import configured_cookie_profiles, cookie_file_path, normalize_cookie_profile, normalize_cookies
-from .services.dependencies import ensure_runtime_dependencies, ffmpeg_version, ytdlp_version
-from .services.files import download_response, folder_download_response, folder_manifest_response, list_files, resolve_download_file, resolve_download_folder, stream_response
+from .services.dependencies import ensure_runtime_dependencies, ffmpeg_version, update_runtime_dependencies, ytdlp_version
+from .services.files import folder_download_response, folder_manifest_response, list_files, ranged_download_response, resolve_download_file, resolve_download_folder, stream_response
+from .services.settings import default_video_resolution, filename_template, save_default_video_resolution, save_filename_template
 from .services.storage import Storage
 from .services.task_manager import TaskManager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    manager: TaskManager = app.state.task_manager
+    ensure_runtime_dependencies()
+    await manager.start()
+    try:
+        yield
+    finally:
+        await manager.stop()
 
 
 def create_app() -> FastAPI:
@@ -27,22 +41,13 @@ def create_app() -> FastAPI:
     storage = Storage(config.database_path)
     manager = TaskManager(config, storage)
 
-    app = FastAPI(title="YTSage Server", version="5.2.0-server")
+    app = FastAPI(title="YTSage Server", version="5.2.0-server", lifespan=lifespan)
     app.state.config = config
     app.state.storage = storage
     app.state.task_manager = manager
 
     def auth_dependency(request: Request, authorization: Annotated[str | None, Header()] = None) -> None:
         require_auth(config, request, authorization)
-
-    @app.on_event("startup")
-    async def startup() -> None:
-        ensure_runtime_dependencies()
-        await manager.start()
-
-    @app.on_event("shutdown")
-    async def shutdown() -> None:
-        await manager.stop()
 
     @app.get("/api/health", response_model=HealthResponse)
     def health(_: None = Depends(auth_dependency)) -> HealthResponse:
@@ -60,6 +65,10 @@ def create_app() -> FastAPI:
             auth_configured=bool(config.auth_token),
         )
 
+    @app.post("/api/dependencies/update", response_model=DependencyUpdateResponse)
+    def update_dependencies(_: None = Depends(auth_dependency)) -> DependencyUpdateResponse:
+        return DependencyUpdateResponse(**update_runtime_dependencies())
+
     @app.get("/api/settings", response_model=SettingsResponse)
     def settings(_: None = Depends(auth_dependency)) -> SettingsResponse:
         profiles = configured_cookie_profiles(config.config_dir)
@@ -70,6 +79,8 @@ def create_app() -> FastAPI:
             auth_configured=bool(config.auth_token),
             cookies_configured=any(profiles.values()),
             cookie_profiles=profiles,
+            filename_template=filename_template(config.config_dir),
+            default_video_resolution=default_video_resolution(config.config_dir),
         )
 
     @app.post("/api/settings/cookies", response_model=CookieSaveResponse)
@@ -83,12 +94,21 @@ def create_app() -> FastAPI:
         target.write_text(normalized, encoding="utf-8")
         return CookieSaveResponse(cookies_configured=True, profile=profile)
 
+    @app.post("/api/settings/filename-template", response_model=SettingsResponse)
+    def save_template(request: FilenameTemplateSaveRequest, _: None = Depends(auth_dependency)) -> SettingsResponse:
+        save_filename_template(config.config_dir, request.filename_template)
+        if request.default_video_resolution is not None:
+            save_default_video_resolution(config.config_dir, request.default_video_resolution)
+        return settings()
+
     @app.post("/api/analyze", response_model=AnalyzeResponse)
     def analyze_url(request: AnalyzeRequest, _: None = Depends(auth_dependency)) -> AnalyzeResponse:
         return analyzer.analyze(request, config_dir=config.config_dir)
 
     @app.post("/api/tasks", response_model=TaskResponse)
     async def create_task(request: CreateTaskRequest, _: None = Depends(auth_dependency)) -> TaskResponse:
+        if not request.filename_template.strip():
+            request.filename_template = filename_template(config.config_dir)
         return await manager.create_task(request)
 
     @app.get("/api/tasks", response_model=list[TaskResponse])
@@ -108,6 +128,13 @@ def create_app() -> FastAPI:
             return await manager.cancel_task(task_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Task not found") from exc
+
+    @app.post("/api/tasks/{task_id}/retry-playlist-item/{playlist_index}", response_model=TaskResponse)
+    async def retry_playlist_item(task_id: str, playlist_index: int, _: None = Depends(auth_dependency)) -> TaskResponse:
+        try:
+            return await manager.retry_playlist_item(task_id, playlist_index)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Playlist item not found") from exc
 
     @app.delete("/api/tasks/{task_id}", status_code=204)
     async def delete_task(task_id: str, _: None = Depends(auth_dependency)) -> Response:
@@ -134,7 +161,7 @@ def create_app() -> FastAPI:
                 event = await queue.get()
                 payload = event.model_dump() if hasattr(event, "model_dump") else event.dict()
                 await websocket.send_text(json.dumps(payload))
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, asyncio.CancelledError):
             pass
         finally:
             manager.unsubscribe(queue)
@@ -178,8 +205,8 @@ def create_app() -> FastAPI:
         return folder_manifest_response(config.download_dir, folder_path, archive_name, request, format)
 
     @app.get("/api/files/{file_id}/download", name="download_file")
-    def download_file(file_id: str, _: None = Depends(auth_dependency)):
-        return download_response(resolve_download_file(config.download_dir, file_id))
+    def download_file(file_id: str, range_header: Annotated[str | None, Header(alias="Range")] = None, _: None = Depends(auth_dependency)):
+        return ranged_download_response(resolve_download_file(config.download_dir, file_id), range_header)
 
     @app.get("/api/files/{file_id}/stream", name="stream_file")
     def stream_file(file_id: str, range_header: Annotated[str | None, Header(alias="Range")] = None, _: None = Depends(auth_dependency)):

@@ -2,6 +2,7 @@ import type {
   AnalyzeResponse,
   CookieSaveResponse,
   CreateTaskRequest,
+  DependencyUpdateResponse,
   FileListResponse,
   HealthResponse,
   HistoryEntry,
@@ -48,6 +49,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 export function createApiClient({ token }: ApiClientOptions) {
   return {
     health: () => fetch('/api/health', { headers: headers(token) }).then(parseResponse<HealthResponse>),
+    updateDependencies: () => fetch('/api/dependencies/update', { method: 'POST', headers: headers(token) }).then(parseResponse<DependencyUpdateResponse>),
     settings: () => fetch('/api/settings', { headers: headers(token) }).then(parseResponse<SettingsResponse>),
     saveCookies: (content: string, profile = 'default') =>
       fetch('/api/settings/cookies', {
@@ -55,6 +57,12 @@ export function createApiClient({ token }: ApiClientOptions) {
         headers: headers(token, true),
         body: JSON.stringify({ content, profile }),
       }).then(parseResponse<CookieSaveResponse>),
+    saveFilenameTemplate: (filenameTemplate: string, defaultVideoResolution?: string) =>
+      fetch('/api/settings/filename-template', {
+        method: 'POST',
+        headers: headers(token, true),
+        body: JSON.stringify({ filename_template: filenameTemplate, default_video_resolution: defaultVideoResolution }),
+      }).then(parseResponse<SettingsResponse>),
     analyze: (url: string, genericMode = true) =>
       fetch('/api/analyze', {
         method: 'POST',
@@ -70,6 +78,8 @@ export function createApiClient({ token }: ApiClientOptions) {
       }).then(parseResponse<TaskResponse>),
     cancelTask: (taskId: string) =>
       fetch(`/api/tasks/${taskId}/cancel`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
+    retryPlaylistItem: (taskId: string, playlistIndex: number) =>
+      fetch(`/api/tasks/${taskId}/retry-playlist-item/${playlistIndex}`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
     deleteTask: (taskId: string) => fetch(`/api/tasks/${taskId}`, { method: 'DELETE', headers: headers(token) }).then((response) => {
       if (!response.ok) return parseResponse<never>(response);
     }),

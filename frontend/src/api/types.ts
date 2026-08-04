@@ -12,6 +12,13 @@ export interface HealthResponse {
   auth_configured: boolean;
 }
 
+export interface DependencyUpdateResponse {
+  yt_dlp: string;
+  ffmpeg: string;
+  yt_dlp_version?: string | null;
+  ffmpeg_version?: string | null;
+}
+
 export interface SettingsResponse {
   download_dir: string;
   config_dir: string;
@@ -19,6 +26,8 @@ export interface SettingsResponse {
   auth_configured: boolean;
   cookies_configured: boolean;
   cookie_profiles: Record<string, boolean>;
+  filename_template: string;
+  default_video_resolution: string;
 }
 
 export interface CookieSaveResponse {
@@ -81,9 +90,9 @@ export interface CreateTaskRequest {
   save_description: boolean;
   embed_chapters: boolean;
   audio_normalization: boolean;
-  sponsorblock_categories: string[];
   rate_limit?: string | null;
   proxy_url?: string | null;
+  concurrent_fragments?: number | null;
   cookie_file?: string | null;
   playlist_items?: string | null;
   playlist_title?: string | null;
@@ -99,6 +108,7 @@ export interface TaskProgress {
   current_filename?: string | null;
   downloaded_bytes?: number | null;
   playlist_current_index?: number | null;
+  playlist_last_index?: number | null;
   playlist_total?: number | null;
   playlist_failed_indexes?: number[];
   playlist_failures?: Record<string, string>;

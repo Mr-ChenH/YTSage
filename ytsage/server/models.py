@@ -72,9 +72,9 @@ class CreateTaskRequest(BaseModel):
     save_description: bool = False
     embed_chapters: bool = False
     audio_normalization: bool = False
-    sponsorblock_categories: list[str] = Field(default_factory=list)
     rate_limit: str | None = None
     proxy_url: str | None = None
+    concurrent_fragments: int | None = Field(default=None, ge=1, le=16)
     cookie_file: str | None = None
     playlist_items: str | None = None
     playlist_title: str | None = None
@@ -90,6 +90,7 @@ class TaskProgress(BaseModel):
     current_filename: str | None = None
     downloaded_bytes: int | None = None
     playlist_current_index: int | None = None
+    playlist_last_index: int | None = None
     playlist_total: int | None = None
     playlist_failed_indexes: list[int] = Field(default_factory=list)
     playlist_failures: dict[str, str] = Field(default_factory=dict)
@@ -161,6 +162,11 @@ class CookieSaveResponse(BaseModel):
     profile: str = "default"
 
 
+class FilenameTemplateSaveRequest(BaseModel):
+    filename_template: str = Field(min_length=1, max_length=300)
+    default_video_resolution: str | None = Field(default=None, max_length=20)
+
+
 class SettingsResponse(BaseModel):
     download_dir: str
     config_dir: str
@@ -168,6 +174,8 @@ class SettingsResponse(BaseModel):
     auth_configured: bool
     cookies_configured: bool = False
     cookie_profiles: dict[str, bool] = Field(default_factory=dict)
+    filename_template: str
+    default_video_resolution: str = "best"
 
 
 class HealthResponse(BaseModel):
@@ -178,3 +186,10 @@ class HealthResponse(BaseModel):
     ffmpeg: str
     queue_concurrency: int
     auth_configured: bool
+
+
+class DependencyUpdateResponse(BaseModel):
+    yt_dlp: str
+    ffmpeg: str
+    yt_dlp_version: str | None = None
+    ffmpeg_version: str | None = None

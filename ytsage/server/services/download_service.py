@@ -52,12 +52,12 @@ def build_download_command(request: CreateTaskRequest, download_dir: Path) -> li
         cmd.append("--write-description")
     if request.embed_chapters:
         cmd.append("--embed-chapters")
-    if request.sponsorblock_categories:
-        cmd.extend(["--sponsorblock-remove", ",".join(request.sponsorblock_categories)])
     if request.rate_limit:
         cmd.extend(["--limit-rate", request.rate_limit])
     if request.proxy_url:
         cmd.extend(["--proxy", request.proxy_url])
+    if request.concurrent_fragments:
+        cmd.extend(["--concurrent-fragments", str(request.concurrent_fragments)])
     if request.cookie_file:
         cmd.extend(["--cookies", request.cookie_file])
     if request.playlist_items:
@@ -74,6 +74,7 @@ def parse_progress_line(line: str, current: TaskProgress | None = None) -> TaskP
     playlist_item = _PLAYLIST_ITEM_RE.search(stripped)
     if playlist_item:
         progress.playlist_current_index = int(playlist_item.group("index"))
+        progress.playlist_last_index = progress.playlist_current_index
         progress.playlist_total = int(playlist_item.group("total"))
         progress.status_text = stripped
         return progress

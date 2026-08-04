@@ -7,6 +7,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _load_dotenv() -> None:
+    env_path = Path.cwd() / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def _path_from_env(name: str, default: str) -> Path:
     return Path(os.environ.get(name, default)).expanduser().resolve()
 
@@ -47,6 +62,7 @@ class ServerConfig:
 
 
 def load_config() -> ServerConfig:
+    _load_dotenv()
     package_dir = Path(__file__).resolve().parent
     config = ServerConfig(
         host=os.environ.get("YTSAGE_HOST", "0.0.0.0"),

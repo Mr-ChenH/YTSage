@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Artplayer from 'artplayer';
 import { createRoot } from 'react-dom/client';
 import { ApiError, createApiClient } from './api/client';
 import type {
@@ -21,22 +22,23 @@ import './styles.css';
 
 const messages = {
   zh: {
-    server: '服务端',
-    railNote: '可信局域网模式。除非服务端已配置 Token，否则无需认证。',
     navWorkspace: '下载',
     navTasks: '任务',
     navHistory: '历史',
     navFiles: '文件',
+    navPlayer: '播放',
     navSettings: '设置',
     navSystem: '系统',
     workspaceTitle: '下载工作台',
-    workspaceDesc: '分析链接、选择格式，并加入 Docker 下载队列。',
+    workspaceDesc: '分析链接、选择格式，并加入下载队列。',
     tasksTitle: '任务',
     tasksDesc: '通过 WebSocket 和轮询同步队列与实时进度。',
     historyTitle: '历史',
     historyDesc: '查看已完成和失败的下载记录。',
     filesTitle: '文件',
     filesDesc: '下载目录文件库，提供安全链接和支持 Range 的播放。',
+    playerTitle: '播放',
+    playerDesc: '播放下载目录中的视频和音频文件。',
     settingsTitle: '设置',
     settingsDesc: '服务端默认值和可选 Token 辅助配置。',
     systemTitle: '系统',
@@ -80,12 +82,15 @@ const messages = {
     modeVideo: '视频',
     modeAudio: '音频',
     modeSubtitles: '字幕',
-    selectedFormat: '选中源格式',
-    selectedFormatId: '格式 ID',
+    videoOutputFormat: '视频输出格式',
+    subtitleLanguages: '字幕语言',
+    proxyUrl: '代理地址',
+    proxyPlaceholder: '例如 http://127.0.0.1:7890',
+    concurrentFragments: '并发片段',
+    defaultVideoResolution: '默认视频清晰度',
     audioOutputFormat: '音频输出格式',
     formatSelect: '格式选择',
     autoBestFormat: '自动选择最佳格式',
-    playlistItems: '播放列表条目',
     playlistSelection: '播放列表选择',
     analysisPlaylistTab: '视频列表',
     analysisFormatsTab: '格式列表',
@@ -100,11 +105,14 @@ const messages = {
     best: 'best',
     mergeSubtitles: '合并字幕',
     saveThumbnail: '保存缩略图',
+    saveDescription: '保存描述',
     embedChapters: '嵌入章节',
     normalizeAudio: '音频标准化',
     createTask: '创建下载任务',
     noTasks: '暂无任务。请从下载工作台创建下载。',
     taskPlaylist: '下载列表',
+    expand: '展开',
+    collapse: '折叠',
     currentItem: '当前',
     clearRecords: '清空记录',
     deleteRecord: '删除记录',
@@ -113,11 +121,15 @@ const messages = {
     cancel: '取消',
     openFiles: '打开文件',
     redownload: '重新下载',
+    retryItem: '重试',
     copyPath: '复制路径',
     noHistory: '暂无历史。完成的下载会显示在这里。',
     library: '文件库',
     searchFiles: '按文件名搜索',
     folderFilter: '文件夹',
+    folderTree: '目录树',
+    mediaInFolder: '媒体文件',
+    directMediaOnly: '显示当前目录下的视频和音频',
     allFolders: '全部文件夹',
     downloadFolder: '下载 ZIP',
     downloadManifest: '下载清单',
@@ -133,9 +145,22 @@ const messages = {
     download: '下载',
     copyLink: '复制链接',
     player: '播放器',
+    playQueue: '播放列表',
+    playerFolder: '播放目录',
+    speed: '倍速',
     selectPlayable: '请选择一个可播放文件。',
     downloadOnly: '此格式仅支持下载。',
     downloadDir: '下载目录',
+    filenameTemplate: '文件保存格式',
+    filenameTemplatePreset: '保存格式预设',
+    filenameTemplateCustom: '自定义保存格式',
+    filenameTemplateDescTitle: '仅标题，最简洁',
+    filenameTemplateDescTitleId: '标题 + 视频 ID，避免重名',
+    filenameTemplateDescResolutionId: '标题 + 分辨率 + 视频 ID，适合视频文件',
+    filenameTemplateDescDateTitleId: '上传日期 + 标题 + 视频 ID，适合按时间整理',
+    filenameTemplateDescUploaderTitleId: '按作者分文件夹保存',
+    filenameTemplateDescCustom: '手动编辑 yt-dlp 输出模板',
+    filenameTemplateSaved: '文件保存格式已保存',
     configDir: '配置目录',
     queueConcurrency: '队列并发',
     authConfigured: '服务端认证',
@@ -145,6 +170,7 @@ const messages = {
     cookiePastePlaceholder: '粘贴 Netscape cookies.txt 内容，或浏览器扩展导出的 JSON cookies 内容',
     uploadCookieFile: '上传 Cookies 文件',
     saveCookies: '保存 Cookies',
+    saveSettings: '保存设置',
     clearCookies: '清除 Cookies',
     cookiesConfigured: 'Cookies 状态',
     cookieProfile: 'Cookies 平台',
@@ -162,6 +188,8 @@ const messages = {
     fastapiServer: 'FastAPI 服务端',
     requiredAnalyze: '分析/下载所需',
     requiredMuxing: '封装/转换所需',
+    updateDependencies: '更新依赖',
+    dependenciesUpdated: '依赖已更新',
     serverDetails: '服务端详情',
     stdout: '标准输出',
     unknown: '未知',
@@ -184,22 +212,23 @@ const messages = {
     english: 'English',
   },
   en: {
-    server: 'Server',
-    railNote: 'Trusted LAN mode. Token is optional unless configured on the server.',
     navWorkspace: 'Download',
     navTasks: 'Tasks',
     navHistory: 'History',
     navFiles: 'Files',
+    navPlayer: 'Player',
     navSettings: 'Settings',
     navSystem: 'System',
     workspaceTitle: 'Download Workspace',
-    workspaceDesc: 'Analyze, choose formats, and send work into the Docker queue.',
+    workspaceDesc: 'Analyze, choose formats, and send work into the queue.',
     tasksTitle: 'Tasks',
     tasksDesc: 'Realtime queue and progress, updated through WebSocket and polling.',
     historyTitle: 'History',
     historyDesc: 'Completed and failed task records.',
     filesTitle: 'Files',
     filesDesc: 'Download-root library with safe links and Range-capable playback.',
+    playerTitle: 'Player',
+    playerDesc: 'Play video and audio files from the download directory.',
     settingsTitle: 'Settings',
     settingsDesc: 'Server-side defaults and optional token helper.',
     systemTitle: 'System',
@@ -243,12 +272,15 @@ const messages = {
     modeVideo: 'Video',
     modeAudio: 'Audio',
     modeSubtitles: 'Subtitles',
-    selectedFormat: 'Selected source format',
-    selectedFormatId: 'Format ID',
+    videoOutputFormat: 'Video output format',
+    subtitleLanguages: 'Subtitle languages',
+    proxyUrl: 'Proxy URL',
+    proxyPlaceholder: 'e.g. http://127.0.0.1:7890',
+    concurrentFragments: 'Concurrent fragments',
+    defaultVideoResolution: 'Default video resolution',
     audioOutputFormat: 'Audio output format',
     formatSelect: 'Format',
     autoBestFormat: 'Auto best format',
-    playlistItems: 'Playlist items',
     playlistSelection: 'Playlist Selection',
     analysisPlaylistTab: 'Videos',
     analysisFormatsTab: 'Formats',
@@ -263,11 +295,14 @@ const messages = {
     best: 'best',
     mergeSubtitles: 'Merge subtitles',
     saveThumbnail: 'Save thumbnail',
+    saveDescription: 'Save description',
     embedChapters: 'Embed chapters',
     normalizeAudio: 'Normalize audio',
     createTask: 'Create Download Task',
     noTasks: 'No tasks yet. Create a download from the workspace.',
     taskPlaylist: 'Download list',
+    expand: 'Expand',
+    collapse: 'Collapse',
     currentItem: 'Current',
     clearRecords: 'Clear records',
     deleteRecord: 'Delete record',
@@ -276,11 +311,15 @@ const messages = {
     cancel: 'Cancel',
     openFiles: 'Open Files',
     redownload: 'Redownload',
+    retryItem: 'Retry',
     copyPath: 'Copy Path',
     noHistory: 'No history yet. Completed downloads will appear here.',
     library: 'Library',
     searchFiles: 'Search by filename',
     folderFilter: 'Folder',
+    folderTree: 'Folders',
+    mediaInFolder: 'Media files',
+    directMediaOnly: 'Showing video and audio in the selected folder',
     allFolders: 'All folders',
     downloadFolder: 'Download ZIP',
     downloadManifest: 'Download Manifest',
@@ -296,9 +335,22 @@ const messages = {
     download: 'Download',
     copyLink: 'Copy Link',
     player: 'Player',
+    playQueue: 'Playlist',
+    playerFolder: 'Playback folder',
+    speed: 'Speed',
     selectPlayable: 'Select a playable file.',
     downloadOnly: 'This format is download-only.',
     downloadDir: 'Download directory',
+    filenameTemplate: 'Filename template',
+    filenameTemplatePreset: 'Template preset',
+    filenameTemplateCustom: 'Custom template',
+    filenameTemplateDescTitle: 'Title only, shortest format',
+    filenameTemplateDescTitleId: 'Title + video ID to avoid duplicate names',
+    filenameTemplateDescResolutionId: 'Title + resolution + video ID, useful for video files',
+    filenameTemplateDescDateTitleId: 'Upload date + title + video ID, useful for chronological folders',
+    filenameTemplateDescUploaderTitleId: 'Save under uploader folders',
+    filenameTemplateDescCustom: 'Manually edit the yt-dlp output template',
+    filenameTemplateSaved: 'Filename template saved',
     configDir: 'Config directory',
     queueConcurrency: 'Queue concurrency',
     authConfigured: 'Auth configured',
@@ -308,6 +360,7 @@ const messages = {
     cookiePastePlaceholder: 'Paste Netscape cookies.txt content, or JSON cookies exported from a browser extension',
     uploadCookieFile: 'Upload cookies file',
     saveCookies: 'Save cookies',
+    saveSettings: 'Save settings',
     clearCookies: 'Clear cookies',
     cookiesConfigured: 'Cookies status',
     cookieProfile: 'Cookies platform',
@@ -325,6 +378,8 @@ const messages = {
     fastapiServer: 'FastAPI server',
     requiredAnalyze: 'Required for analyze/download',
     requiredMuxing: 'Required for muxing/conversion',
+    updateDependencies: 'Update dependencies',
+    dependenciesUpdated: 'Dependencies updated',
     serverDetails: 'Server Details',
     stdout: 'stdout',
     unknown: 'unknown',
@@ -357,6 +412,7 @@ const navItems = [
   ['tasks', 'Q', 'navTasks'],
   ['history', 'H', 'navHistory'],
   ['files', 'F', 'navFiles'],
+  ['player', 'P', 'navPlayer'],
   ['settings', 'S', 'navSettings'],
   ['system', 'I', 'navSystem'],
 ] as const;
@@ -409,6 +465,26 @@ function mediaLabel(mediaType: MediaType, t: T): string {
   return t(labels[mediaType]);
 }
 
+function fileDirectory(file: FileEntry): string {
+  const normalized = file.relative_path.replaceAll('\\', '/');
+  const suffix = `/${file.name}`;
+  if (normalized === file.name) return '';
+  if (normalized.endsWith(suffix)) return normalized.slice(0, -suffix.length);
+  const index = normalized.lastIndexOf('/');
+  return index >= 0 ? normalized.slice(0, index) : '';
+}
+
+function playlistMeta(file: FileEntry, t: T): string {
+  const directory = fileDirectory(file);
+  return directory ? `${directory} - ${formatBytes(file.size)}` : `${mediaLabel(file.media_type, t)} - ${formatBytes(file.size)}`;
+}
+
+function directParent(relativePath: string): string {
+  const normalized = relativePath.replaceAll('\\', '/');
+  const index = normalized.lastIndexOf('/');
+  return index >= 0 ? normalized.slice(0, index) : '';
+}
+
 function modeLabel(mode: DownloadMode, t: T): string {
   const labels: Record<DownloadMode, TKey> = {
     video: 'modeVideo',
@@ -436,6 +512,9 @@ function App() {
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [fileLibrary, setFileLibrary] = useState<FileListResponse | null>(null);
+  const [playQueue, setPlayQueue] = useState<FileEntry[]>([]);
+  const [currentFile, setCurrentFile] = useState<FileEntry | null>(null);
+  const [playFolder, setPlayFolder] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
 
@@ -480,7 +559,10 @@ function App() {
       socket.onmessage = (event) => {
         const payload = JSON.parse(event.data) as TaskEvent;
         setTasks((current) => upsertTask(current, payload.task));
-        if (payload.type === 'task_completed') void loadCore();
+        if (payload.type === 'task_completed') {
+          setFileLibrary(null);
+          void loadCore();
+        }
       };
     } catch {
       socket = null;
@@ -499,31 +581,43 @@ function App() {
     else localStorage.removeItem('ytsage.authToken');
   }
 
+  function playFile(file: FileEntry, queue: FileEntry[], folder = '') {
+    const playableQueue = queue.filter((item) => item.playable);
+    setPlayQueue(playableQueue.length ? playableQueue : [file]);
+    setCurrentFile(file);
+    setPlayFolder(folder);
+    changePage('player');
+  }
+
+  function openFilesPage() {
+    setFileLibrary(null);
+    changePage('files');
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar acrylic">
         <div className="brand">
           <img src="/static/assets/ytsage-wordmark.svg" alt="YTSage" />
-          <span className="pill"><span className="dot blue" />{t('server')}</span>
         </div>
         <nav className="nav" aria-label="Primary">
           {navItems.map(([id, icon, labelKey]) => (
-            <button key={id} className={page === id ? 'active' : ''} onClick={() => changePage(id)}>
+            <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'files' ? openFilesPage() : changePage(id)}>
               <span className="nav-icon">{icon}</span><span className="nav-label">{t(labelKey)}</span>
             </button>
           ))}
         </nav>
-        <div className="rail-note">{t('railNote')}</div>
       </aside>
 
       <main className="main">
         <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={loadCore} error={error} />
-        {page === 'workspace' && <Workspace api={api} t={t} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
+        {page === 'workspace' && <Workspace api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
         {page === 'tasks' && <Tasks tasks={tasks} api={api} t={t} onChanged={loadCore} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
-        {page === 'history' && <History entries={history} api={api} t={t} onChanged={loadCore} onOpenFiles={() => changePage('files')} />}
-        {page === 'files' && <Files library={fileLibrary} token={token} api={api} t={t} onLoaded={setFileLibrary} />}
+        {page === 'history' && <History entries={history} api={api} t={t} onChanged={loadCore} onOpenFiles={openFilesPage} />}
+        {page === 'files' && <Files library={fileLibrary} token={token} api={api} t={t} onLoaded={setFileLibrary} onPlay={playFile} />}
+        {page === 'player' && <PlayerPage current={currentFile} queue={playQueue} folder={playFolder} token={token} api={api} t={t} onSelect={setCurrentFile} onQueue={setPlayQueue} onFolder={setPlayFolder} />}
         {page === 'settings' && <Settings api={api} settings={settings} token={token} t={t} onToken={saveToken} onSaved={loadCore} />}
-        {page === 'system' && <System health={health} settings={settings} t={t} />}
+        {page === 'system' && <System api={api} health={health} settings={settings} t={t} onChanged={loadCore} />}
       </main>
     </div>
   );
@@ -546,6 +640,7 @@ function TopBar({ page, health, authRequired, token, locale, t, onLocale, onToke
     tasks: ['tasksTitle', 'tasksDesc'],
     history: ['historyTitle', 'historyDesc'],
     files: ['filesTitle', 'filesDesc'],
+    player: ['playerTitle', 'playerDesc'],
     settings: ['settingsTitle', 'settingsDesc'],
     system: ['systemTitle', 'systemDesc'],
   };
@@ -599,9 +694,20 @@ function selectedPlaylistEntries(analysis: AnalyzeResponse | null, selectedIndex
   return analysis.playlist_entries.filter((entry) => selected.has(entry.index));
 }
 
-function playlistFilenameTemplate(isPlaylist: boolean): string {
-  if (!isPlaylist) return '%(title)s_%(resolution)s_[%(id)s].%(ext)s';
-  return '%(playlist_title)s/%(playlist_index)02d-%(title)s_%(resolution)s_[%(id)s].%(ext)s';
+const filenameTemplatePresets: Array<{ id: string; template: string; descKey: TKey }> = [
+  { id: 'title', template: '%(title)s.%(ext)s', descKey: 'filenameTemplateDescTitle' },
+  { id: 'title-id', template: '%(title)s_[%(id)s].%(ext)s', descKey: 'filenameTemplateDescTitleId' },
+  { id: 'title-resolution-id', template: '%(title)s_%(resolution)s_[%(id)s].%(ext)s', descKey: 'filenameTemplateDescResolutionId' },
+  { id: 'date-title-id', template: '%(upload_date)s_%(title)s_[%(id)s].%(ext)s', descKey: 'filenameTemplateDescDateTitleId' },
+  { id: 'uploader-title-id', template: '%(uploader)s/%(title)s_[%(id)s].%(ext)s', descKey: 'filenameTemplateDescUploaderTitleId' },
+];
+
+const videoResolutionOptions = ['best', '2160p', '1440p', '1080p', '720p', '480p', '360p'];
+
+function taskFilenameTemplate(baseTemplate: string, isPlaylist: boolean): string {
+  if (!isPlaylist) return baseTemplate;
+  if (baseTemplate.includes('%(playlist_title)') || baseTemplate.includes('%(playlist_index)')) return baseTemplate;
+  return `%(playlist_title)s/%(playlist_index)02d-${baseTemplate}`;
 }
 
 function modeFormats(formats: FormatInfo[], mode: DownloadMode): FormatInfo[] {
@@ -616,18 +722,19 @@ function modeFormats(formats: FormatInfo[], mode: DownloadMode): FormatInfo[] {
   return [];
 }
 
-function preferredFormatForMode(formats: FormatInfo[], mode: DownloadMode): string | null {
+function preferredFormatForMode(formats: FormatInfo[], mode: DownloadMode, defaultResolution = 'best'): string | null {
   if (mode === 'subtitles') return null;
   const candidates = modeFormats(formats, mode);
   if (mode === 'audio') return candidates.find((format) => format.format_id === 'bestaudio')?.format_id || candidates[0]?.format_id || null;
+  if (defaultResolution !== 'best') {
+    const resolutionNumber = Number(defaultResolution.replace(/p$/i, ''));
+    const matched = candidates.find((format) => {
+      const text = [format.resolution, format.format_id].filter(Boolean).join(' ');
+      return text.includes(defaultResolution) || text.includes(String(resolutionNumber));
+    });
+    if (matched) return matched.format_id;
+  }
   return candidates.find((format) => format.format_id === 'best')?.format_id || candidates[0]?.format_id || null;
-}
-
-function selectedFormatLabel(formats: FormatInfo[], selected: string | null, mode: DownloadMode, t: T): string {
-  if (mode === 'subtitles') return '-';
-  if (!selected) return mode === 'audio' ? 'bestaudio' : t('autoBestFormat');
-  const found = formats.find((format) => format.format_id === selected);
-  return found ? formatLabel(found) : selected;
 }
 
 function formatLabel(format: FormatInfo): string {
@@ -637,11 +744,24 @@ function formatLabel(format: FormatInfo): string {
   return bits.join(' / ');
 }
 
-function Workspace({ api, t, onTask }: { api: ReturnType<typeof createApiClient>; t: T; onTask: (task: TaskResponse) => void }) {
+function toggleListItem(list: string[], item: string): string[] {
+  return list.includes(item) ? list.filter((value) => value !== item) : [...list, item].sort();
+}
+
+function Workspace({ api, t, settings, onTask }: { api: ReturnType<typeof createApiClient>; t: T; settings: SettingsResponse | null; onTask: (task: TaskResponse) => void }) {
   const [url, setUrl] = useState('');
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<string | null>(null);
   const [audioFormat, setAudioFormat] = useState('mp3');
+  const [videoOutputFormat, setVideoOutputFormat] = useState('mp4');
+  const [selectedSubtitleLangs, setSelectedSubtitleLangs] = useState<string[]>([]);
+  const [mergeSubtitles, setMergeSubtitles] = useState(true);
+  const [saveThumbnail, setSaveThumbnail] = useState(false);
+  const [saveDescription, setSaveDescription] = useState(false);
+  const [embedChapters, setEmbedChapters] = useState(true);
+  const [audioNormalization, setAudioNormalization] = useState(false);
+  const [proxyUrl, setProxyUrl] = useState('');
+  const [concurrentFragments, setConcurrentFragments] = useState(4);
   const [selectedPlaylistIndexes, setSelectedPlaylistIndexes] = useState<number[]>([]);
   const [mode, setMode] = useState<DownloadMode>('video');
   const [busy, setBusy] = useState(false);
@@ -653,8 +773,9 @@ function Workspace({ api, t, onTask }: { api: ReturnType<typeof createApiClient>
     try {
       const data = await api.analyze(url);
       setAnalysis(data);
-      setSelectedFormat(preferredFormatForMode(data.formats, mode));
+      setSelectedFormat(preferredFormatForMode(data.formats, mode, settings?.default_video_resolution || 'best'));
       setSelectedPlaylistIndexes(data.playlist_entries.map((entry) => entry.index));
+      setSelectedSubtitleLangs([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -664,8 +785,8 @@ function Workspace({ api, t, onTask }: { api: ReturnType<typeof createApiClient>
 
   useEffect(() => {
     if (!analysis) return;
-    setSelectedFormat(preferredFormatForMode(analysis.formats, mode));
-  }, [mode, analysis]);
+    setSelectedFormat(preferredFormatForMode(analysis.formats, mode, settings?.default_video_resolution || 'best'));
+  }, [mode, analysis, settings?.default_video_resolution]);
 
   async function createTask() {
     setBusy(true);
@@ -674,19 +795,20 @@ function Workspace({ api, t, onTask }: { api: ReturnType<typeof createApiClient>
       url,
       mode,
       format_id: selectedFormat,
-      output_format: 'mp4',
+      output_format: videoOutputFormat,
       audio_format: audioFormat,
-      subtitle_langs: [],
-      merge_subtitles: true,
-      save_thumbnail: false,
-      save_description: false,
-      embed_chapters: true,
-      audio_normalization: false,
-      sponsorblock_categories: [],
+      subtitle_langs: selectedSubtitleLangs,
+      merge_subtitles: mergeSubtitles,
+      save_thumbnail: saveThumbnail,
+      save_description: saveDescription,
+      embed_chapters: embedChapters,
+      audio_normalization: audioNormalization,
+      proxy_url: proxyUrl.trim() || null,
+      concurrent_fragments: concurrentFragments,
       playlist_items: playlistItemsValue(selectedPlaylistIndexes, analysis?.playlist_count),
       playlist_title: analysis?.is_playlist ? rawText(analysis, 'collection_title') || analysis.title || null : null,
       playlist_entries: selectedPlaylistEntries(analysis, selectedPlaylistIndexes),
-      filename_template: playlistFilenameTemplate(Boolean(analysis?.is_playlist)),
+      filename_template: taskFilenameTemplate(settings?.filename_template || filenameTemplatePresets[2].template, Boolean(analysis?.is_playlist)),
     };
     try {
       onTask(await api.createTask(request));
@@ -722,18 +844,22 @@ function Workspace({ api, t, onTask }: { api: ReturnType<typeof createApiClient>
             <option value="">{mode === 'audio' ? 'bestaudio' : t('autoBestFormat')}</option>
             {modeFormats(analysis?.formats || [], mode).map((format) => <option key={format.format_id} value={format.format_id}>{formatLabel(format)}</option>)}
           </select></label>
+          {mode === 'video' && <label>{t('videoOutputFormat')}<select value={videoOutputFormat} onChange={(event) => setVideoOutputFormat(event.target.value)}>
+            {['mp4', 'webm', 'mkv'].map((format) => <option key={format} value={format}>{format}</option>)}
+          </select></label>}
           {mode === 'audio' && <label>{t('audioOutputFormat')}<select value={audioFormat} onChange={(event) => setAudioFormat(event.target.value)}>
             {['mp3', 'm4a', 'opus', 'flac', 'wav'].map((format) => <option key={format} value={format}>{format}</option>)}
           </select></label>}
-          <label>{t('selectedFormat')}{readonlyValue(selectedFormatLabel(analysis?.formats || [], selectedFormat, mode, t))}</label>
-          <label>{t('selectedFormatId')}<input value={selectedFormat || ''} onChange={(event) => setSelectedFormat(event.target.value || null)} placeholder={mode === 'audio' ? 'bestaudio' : t('best')} disabled={mode === 'subtitles'} /></label>
-          {analysis?.is_playlist && <label>{t('playlistItems')}<input readOnly value={playlistItemsValue(selectedPlaylistIndexes, analysis.playlist_count) || t('allItems')} /></label>}
+          {!!analysis?.subtitles.length && <div className="section-block compact-options"><div className="section-heading"><h3>{t('subtitleLanguages')}</h3><span className="badge blue">{selectedSubtitleLangs.length}</span></div><div className="check-grid">{analysis.subtitles.map((subtitle) => <label className="check" key={`${subtitle.language}-${subtitle.automatic ? 'auto' : 'manual'}`}><input type="checkbox" checked={selectedSubtitleLangs.includes(subtitle.language)} onChange={() => setSelectedSubtitleLangs((current) => toggleListItem(current, subtitle.language))} /> {subtitle.language}{subtitle.name ? ` - ${subtitle.name}` : ''}</label>)}</div></div>}
           <div className="check-grid">
-            <label className="check"><input type="checkbox" defaultChecked /> {t('mergeSubtitles')}</label>
-            <label className="check"><input type="checkbox" /> {t('saveThumbnail')}</label>
-            <label className="check"><input type="checkbox" defaultChecked /> {t('embedChapters')}</label>
-            <label className="check"><input type="checkbox" /> {t('normalizeAudio')}</label>
+            <label className="check"><input type="checkbox" checked={mergeSubtitles} onChange={(event) => setMergeSubtitles(event.target.checked)} /> {t('mergeSubtitles')}</label>
+            <label className="check"><input type="checkbox" checked={saveThumbnail} onChange={(event) => setSaveThumbnail(event.target.checked)} /> {t('saveThumbnail')}</label>
+            <label className="check"><input type="checkbox" checked={saveDescription} onChange={(event) => setSaveDescription(event.target.checked)} /> {t('saveDescription')}</label>
+            <label className="check"><input type="checkbox" checked={embedChapters} onChange={(event) => setEmbedChapters(event.target.checked)} /> {t('embedChapters')}</label>
+            <label className="check"><input type="checkbox" checked={audioNormalization} onChange={(event) => setAudioNormalization(event.target.checked)} disabled={mode !== 'audio'} /> {t('normalizeAudio')}</label>
           </div>
+          <label>{t('proxyUrl')}<input value={proxyUrl} placeholder={t('proxyPlaceholder')} onChange={(event) => setProxyUrl(event.target.value)} /></label>
+          <label>{t('concurrentFragments')}<input type="number" min="1" max="16" value={concurrentFragments} onChange={(event) => setConcurrentFragments(Math.max(1, Math.min(16, Number(event.target.value) || 1)))} /></label>
           <button className="primary" onClick={createTask} disabled={!url || busy || Boolean(analysis?.is_playlist && selectedPlaylistIndexes.length === 0)}>{t('createTask')}</button>
         </div>
       </aside>
@@ -814,6 +940,7 @@ function PlaylistTable({ entries, selected, onSelected, t }: { entries: Playlist
   const [page, setPage] = useState(0);
   const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
+  const pageItems = paginationItems(page + 1, pageCount);
   useEffect(() => setPage(0), [entries]);
   if (!entries.length) return null;
   const pageEntries = entries.slice(page * pageSize, page * pageSize + pageSize);
@@ -831,6 +958,7 @@ function PlaylistTable({ entries, selected, onSelected, t }: { entries: Playlist
           <span className="badge blue">{selected.length} {t('selectedItemsCount')}</span>
           <span className="badge">{formatPageInfo(t('pageInfo'), page + 1, pageCount, entries.length)}</span>
           <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page <= 0}>{t('previousPage')}</button>
+          <div className="page-list compact-page-list" aria-label="Pagination">{pageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`playlist-ellipsis-${index}`}>...</span> : <button className={item === page + 1 ? 'active' : ''} key={item} onClick={() => setPage(item - 1)} disabled={item === page + 1} aria-current={item === page + 1 ? 'page' : undefined}>{item}</button>)}</div>
           <button onClick={() => setPage(Math.min(pageCount - 1, page + 1))} disabled={page >= pageCount - 1}>{t('nextPage')}</button>
           <button onClick={() => onSelected(entries.map((entry) => entry.index))} disabled={allSelected}>{t('allItems')}</button>
           <button onClick={() => onSelected([])} disabled={!selected.length}>{t('clearItems')}</button>
@@ -893,9 +1021,10 @@ function playlistItemState(task: TaskResponse, entry: PlaylistEntry): PlaylistIt
   const failed = new Set(task.progress.playlist_failed_indexes || []);
   if (failed.has(entry.index)) return 'failed';
   const currentIndex = task.progress.playlist_current_index;
+  const lastIndex = task.progress.playlist_last_index || currentIndex;
   if (task.status === 'completed') return 'completed';
   if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'interrupted') {
-    return currentIndex && entry.index < currentIndex ? 'completed' : 'pending';
+    return lastIndex && entry.index <= lastIndex ? 'completed' : 'pending';
   }
   if (currentIndex === entry.index) return 'downloading';
   if (currentIndex && entry.index < currentIndex) return 'completed';
@@ -922,19 +1051,32 @@ function playlistItemStateTone(state: PlaylistItemState): string {
   return tones[state];
 }
 
-function TaskPlaylist({ task, t }: { task: TaskResponse; t: T }) {
+function TaskPlaylist({ task, api, t, onChanged }: { task: TaskResponse; api: ReturnType<typeof createApiClient>; t: T; onChanged: () => void }) {
   const entries = taskPlaylistEntries(task);
+  const [expanded, setExpanded] = useState(() => task.status === 'running' || task.status === 'queued');
+  useEffect(() => {
+    if (task.status === 'running') setExpanded(true);
+  }, [task.status]);
   if (!entries.length) return null;
-  return <div className="task-playlist"><div className="section-heading"><h3>{t('taskPlaylist')}</h3><span className="badge blue">{entries.length}</span></div>
-    <div className="task-playlist-list">{entries.map((entry) => {
+  async function retryItem(entry: PlaylistEntry) {
+    await api.retryPlaylistItem(task.id, entry.index);
+    onChanged();
+  }
+  const counts = entries.reduce<Record<PlaylistItemState, number>>((result, entry) => {
+    result[playlistItemState(task, entry)] += 1;
+    return result;
+  }, { pending: 0, downloading: 0, completed: 0, failed: 0 });
+  return <div className="task-playlist"><div className="section-heading"><h3>{t('taskPlaylist')}</h3><div className="toolbar"><span className="badge blue">{entries.length}</span><span className="badge green">{t('itemCompleted')}: {counts.completed}</span><span className="badge red">{t('itemFailed')}: {counts.failed}</span><button onClick={() => setExpanded((value) => !value)}>{expanded ? t('collapse') : t('expand')}</button></div></div>
+    {expanded && <div className="task-playlist-list">{entries.map((entry) => {
       const state = playlistItemState(task, entry);
       const failure = task.progress.playlist_failures?.[String(entry.index)];
       return <div key={entry.index} className={`task-playlist-item ${state === 'downloading' ? 'current' : ''}`} title={failure || undefined}>
         <span className="badge">{entry.index}</span>
         <strong>{entry.title || entry.id || entry.url || '-'}</strong>
         <span className={`badge ${playlistItemStateTone(state)}`}>{playlistItemStateLabel(state, t)}</span>
+        {state === 'failed' && <button onClick={() => void retryItem(entry)}>{t('retryItem')}</button>}
       </div>;
-    })}</div>
+    })}</div>}
   </div>;
 }
 
@@ -951,7 +1093,7 @@ function Tasks({ tasks, api, t, onChanged, onCancel }: { tasks: TaskResponse[]; 
   if (!tasks.length) return <div className="empty-state">{t('noTasks')}</div>;
   return <div className="stack"><div className="toolbar"><button onClick={() => void clearTasks()}>{t('clearRecords')}</button></div><div className="list">{tasks.map((task) => <div className="row" key={task.id}>
     <div className="row-top"><div className="stack"><strong>{String(task.options.url || task.url)}</strong><span className="muted">{task.progress.current_filename || task.output_path || task.id}</span></div><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div>
-    <TaskPlaylist task={task} t={t} />
+    <TaskPlaylist task={task} api={api} t={t} onChanged={onChanged} />
     <div className="progress"><span style={{ width: `${Math.max(0, Math.min(100, task.progress.percent || 0))}%` }} /></div>
     <div className="row-top"><span className="muted">{task.progress.status_text || `${task.progress.speed || '-'} - ETA ${task.progress.eta || '-'}`}</span><div className="toolbar">{['queued', 'running'].includes(task.status) && <button className="danger" onClick={() => void onCancel(task.id)}>{t('cancel')}</button>}<button onClick={() => void deleteTask(task.id)}>{t('deleteRecord')}</button></div></div>
     {task.error && <pre className="log-box">{task.error}</pre>}
@@ -975,21 +1117,19 @@ function History({ entries, api, t, onChanged, onOpenFiles }: { entries: History
   </div>)}</div></div>;
 }
 
-function Files({ library, token, api, t, onLoaded }: { library: FileListResponse | null; token: string; api: ReturnType<typeof createApiClient>; t: T; onLoaded: (library: FileListResponse) => void }) {
-  const files = library?.files || [];
+function Files({ library, token, api, t, onLoaded, onPlay }: { library: FileListResponse | null; token: string; api: ReturnType<typeof createApiClient>; t: T; onLoaded: (library: FileListResponse) => void; onPlay: (file: FileEntry, queue: FileEntry[], folder: string) => void }) {
   const [query, setQuery] = useState('');
   const [folder, setFolder] = useState('');
-  const [selected, setSelected] = useState<FileEntry | null>(files.find((file) => file.playable) || files[0] || null);
-  const limit = library?.limit || 50;
-  const offset = library?.offset || 0;
-  const total = library?.total || 0;
-  const page = Math.floor(offset / limit) + 1;
-  const pages = Math.max(1, Math.ceil(total / limit));
-  const pageItems = paginationItems(page, pages);
-  useEffect(() => {
-    if (!selected && files.length) setSelected(files.find((file) => file.playable) || files[0]);
-    if (selected && !files.some((file) => file.id === selected.id)) setSelected(files.find((file) => file.playable) || files[0] || null);
-  }, [files, selected]);
+  const [mediaPage, setMediaPage] = useState(1);
+  const files = library?.files || [];
+  const mediaFiles = files.filter((file) => file.playable && (file.media_type === 'video' || file.media_type === 'audio') && directParent(file.relative_path) === folder);
+  const mediaPageSize = 30;
+  const mediaPages = Math.max(1, Math.ceil(mediaFiles.length / mediaPageSize));
+  const normalizedMediaPage = Math.min(mediaPages, Math.max(1, mediaPage));
+  const visibleMediaFiles = mediaFiles.slice((normalizedMediaPage - 1) * mediaPageSize, normalizedMediaPage * mediaPageSize);
+  const mediaPageItems = paginationItems(normalizedMediaPage, mediaPages);
+  const folderItems = library?.folders || [];
+  const limit = library?.limit || 200;
   const authSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
   const fileUrl = (url?: string | null) => url ? `${url}${authSuffix}` : '#';
   const folderUrl = folder ? `${api.downloadFolderUrl(folder)}${token ? `&token=${encodeURIComponent(token)}` : ''}` : '#';
@@ -999,34 +1139,109 @@ function Files({ library, token, api, t, onLoaded }: { library: FileListResponse
   }
   async function changeFolder(value: string) {
     setFolder(value);
+    setMediaPage(1);
     await load(0, query, value);
-  }
-  async function loadPage(targetPage: number) {
-    const normalizedPage = Math.min(pages, Math.max(1, targetPage));
-    await load((normalizedPage - 1) * limit);
   }
   useEffect(() => {
     if (!library) void load(0);
   }, [library]);
-  return <div className="file-grid">
-    <div className="panel acrylic"><div className="panel-header"><h2>{t('library')}</h2><div className="toolbar file-toolbar">
-      <label className="compact-label">{t('folderFilter')}<select value={folder} onChange={(event) => void changeFolder(event.target.value)}><option value="">{t('allFolders')}</option>{(library?.folders || []).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+  return <div className="file-browser-grid">
+    <aside className="panel acrylic file-tree-panel">
+      <div className="panel-header"><h2>{t('folderTree')}</h2><span className="badge blue">{folderItems.length}</span></div>
+      <div className="file-tree-list">
+        <button className={`tree-item ${folder === '' ? 'active' : ''}`} onClick={() => void changeFolder('')}><span className="tree-indent" style={{ width: 0 }} />{t('allFolders')}</button>
+        {folderItems.map((item) => <button className={`tree-item ${folder === item ? 'active' : ''}`} key={item} onClick={() => void changeFolder(item)}><span className="tree-indent" style={{ width: `${Math.max(0, item.split('/').length - 1) * 14}px` }} />{item.split('/').pop() || item}</button>)}
+      </div>
+    </aside>
+    <section className="panel acrylic file-media-panel"><div className="panel-header"><div className="stack"><h2>{t('mediaInFolder')}</h2><span className="muted">{folder || t('allFolders')} - {t('directMediaOnly')}</span></div><div className="toolbar file-toolbar-inline">
       <input value={query} placeholder={t('searchFiles')} onChange={(event) => setQuery(event.target.value)} />
-      <button onClick={() => void load(0)}>{t('search')}</button>
+      <button onClick={() => { setMediaPage(1); void load(0); }}>{t('search')}</button>
       <a className={`button-link ${folder ? '' : 'disabled'}`} href={manifestUrl} aria-disabled={!folder} onClick={(event) => { if (!folder) event.preventDefault(); }}>{t('downloadManifest')}</a>
       <a className={`button-link ${folder ? '' : 'disabled'}`} href={folderUrl} aria-disabled={!folder} onClick={(event) => { if (!folder) event.preventDefault(); }}>{t('downloadFolder')}</a>
-    </div></div><div className="panel-body list">
-      {!files.length && <div className="empty-state">{t('noFiles')}</div>}
-      {files.map((file) => <div className="row" key={file.id}><div className="row-top"><div className="stack"><strong>{file.name}</strong><span className="muted">{file.relative_path} - {formatBytes(file.size)}</span></div><span className={`badge ${file.playable ? 'green' : 'amber'}`}>{file.playable ? t('playable') : mediaLabel(file.media_type, t)}</span></div><div className="toolbar"><button disabled={!file.playable} onClick={() => setSelected(file)}>{t('play')}</button><a className="button-link" href={fileUrl(file.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(file.download_url))}>{t('copyLink')}</button></div></div>)}
-      <div className="pagination-row"><button onClick={() => void load(Math.max(0, offset - limit))} disabled={offset <= 0}>{t('previousPage')}</button><span className="muted">{formatPageInfo(t('pageInfo'), page, pages, total)}</span><div className="page-list" aria-label="Pagination">{pageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`ellipsis-${index}`}>...</span> : <button className={item === page ? 'active' : ''} key={item} onClick={() => void loadPage(item)} disabled={item === page} aria-current={item === page ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => void load(offset + limit)} disabled={offset + limit >= total}>{t('nextPage')}</button></div>
-    </div></div>
-    <aside className="panel acrylic"><div className="panel-header"><h2>{t('player')}</h2><span className="badge blue">HTTP Range</span></div><div className="panel-body stack">
-      {!selected && <div className="empty-state">{t('selectPlayable')}</div>}
-      {selected?.playable && selected.media_type === 'video' && <video src={fileUrl(selected.stream_url)} controls />}
-      {selected?.playable && selected.media_type === 'audio' && <audio src={fileUrl(selected.stream_url)} controls />}
-      {selected && !selected.playable && <div className="empty-state">{t('downloadOnly')}</div>}
-      {selected && <><strong>{selected.name}</strong><span className="muted">{selected.relative_path}</span><a className="button-link primary-link" href={fileUrl(selected.download_url)}>{t('download')}</a></>}
-    </div></aside>
+    </div></div><div className="panel-body media-table-body">
+      {!mediaFiles.length && <div className="empty-state">{t('noFiles')}</div>}
+      {!!mediaFiles.length && <div className="media-table-wrap"><table className="media-table"><thead><tr><th>{t('title')}</th><th>{t('type')}</th><th>{t('size')}</th><th></th></tr></thead><tbody>{visibleMediaFiles.map((file) => <tr key={file.id}><td><strong>{file.name}</strong></td><td><span className="badge green">{mediaLabel(file.media_type, t)}</span></td><td>{formatBytes(file.size)}</td><td><div className="toolbar compact-actions"><button onClick={() => onPlay(file, mediaFiles, folder)}>{t('play')}</button><a className="button-link" href={fileUrl(file.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(file.download_url))}>{t('copyLink')}</button></div></td></tr>)}</tbody></table></div>}
+      <div className="pagination-row"><button onClick={() => setMediaPage(Math.max(1, normalizedMediaPage - 1))} disabled={normalizedMediaPage <= 1}>{t('previousPage')}</button><span className="muted">{formatPageInfo(t('pageInfo'), normalizedMediaPage, mediaPages, mediaFiles.length)}</span><div className="page-list" aria-label="Pagination">{mediaPageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`ellipsis-${index}`}>...</span> : <button className={item === normalizedMediaPage ? 'active' : ''} key={item} onClick={() => setMediaPage(item)} disabled={item === normalizedMediaPage} aria-current={item === normalizedMediaPage ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => setMediaPage(Math.min(mediaPages, normalizedMediaPage + 1))} disabled={normalizedMediaPage >= mediaPages}>{t('nextPage')}</button></div>
+    </div></section>
+  </div>;
+}
+
+function PlayerPage({ current, queue, folder, token, api, t, onSelect, onQueue, onFolder }: { current: FileEntry | null; queue: FileEntry[]; folder: string; token: string; api: ReturnType<typeof createApiClient>; t: T; onSelect: (file: FileEntry | null) => void; onQueue: (files: FileEntry[]) => void; onFolder: (folder: string) => void }) {
+  const [folders, setFolders] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const playerRef = useRef<HTMLDivElement | null>(null);
+  const artRef = useRef<Artplayer | null>(null);
+  const authSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
+  const fileUrl = (url?: string | null) => url ? `${url}${authSuffix}` : '#';
+  const active = current || queue[0] || null;
+
+  async function loadFolder(nextFolder: string) {
+    setLoading(true);
+    onFolder(nextFolder);
+    try {
+      const result = await api.files('', nextFolder, 0, 200);
+      setFolders(result.folders);
+      const mediaFiles = result.files.filter((file) => file.playable && (file.media_type === 'video' || file.media_type === 'audio'));
+      onQueue(mediaFiles);
+      onSelect(mediaFiles[0] || null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void api.files('', '', 0, 1).then((result) => setFolders(result.folders));
+  }, [api]);
+
+  useEffect(() => {
+    if (!queue.length) void loadFolder(folder);
+  }, []);
+
+  useEffect(() => {
+    if (!playerRef.current || !active) return;
+    artRef.current?.destroy(false);
+    artRef.current = new Artplayer({
+      container: playerRef.current,
+      url: fileUrl(active.stream_url),
+      type: active.media_type === 'audio' ? 'audio' : 'mp4',
+      autoplay: true,
+      setting: true,
+      playbackRate: false,
+      controls: [
+        {
+          position: 'right',
+          html: '倍速',
+          selector: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((rate) => ({ html: `${rate}x`, value: rate, default: rate === 1 })),
+          onSelect: (item: { value?: string | number }) => {
+            const rate = Number(item.value || 1);
+            if (artRef.current) artRef.current.playbackRate = rate;
+            return `${rate}x`;
+          },
+        },
+      ],
+      aspectRatio: true,
+      fullscreen: true,
+      fullscreenWeb: true,
+      hotkey: true,
+      pip: active.media_type === 'video',
+      mutex: true,
+      moreVideoAttr: { preload: 'metadata' },
+    });
+    return () => {
+      artRef.current?.destroy(false);
+      artRef.current = null;
+    };
+  }, [active?.id, token]);
+
+  return <div className="watch-layout">
+    <section className="watch-main">
+      <div className="watch-player-shell">
+        {!active && <div className="empty-state">{t('selectPlayable')}</div>}
+        {active && <div className={`art-player-host ${active.media_type === 'audio' ? 'audio-mode' : ''}`} ref={playerRef} />}
+      </div>
+      {active && <div className="watch-meta"><h2>{active.name}</h2><p className="muted">{playlistMeta(active, t)}</p><div className="toolbar"><a className="button-link primary-link" href={fileUrl(active.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(active.download_url))}>{t('copyLink')}</button></div></div>}
+    </section>
+    <aside className="watch-list panel acrylic"><div className="panel-header"><h2>{t('playQueue')}</h2><span className="badge blue">{queue.length}</span></div><div className="watch-folder-bar"><label>{t('playerFolder')}<select value={folder} onChange={(event) => void loadFolder(event.target.value)}><option value="">{t('allFolders')}</option>{folders.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div><div className="watch-list-body">{loading && <div className="empty-state">{t('working')}</div>}{!loading && !queue.length && <div className="empty-state">{t('selectPlayable')}</div>}{!loading && queue.map((file) => <button key={file.id} className={`watch-list-item ${active?.id === file.id ? 'active' : ''}`} onClick={() => onSelect(file)}><span className="watch-thumb">{file.media_type === 'audio' ? 'A' : 'V'}</span><span className="stack"><strong>{file.name}</strong><span className="muted">{playlistMeta(file, t)}</span></span></button>)}</div></aside>
   </div>;
 }
 
@@ -1067,8 +1282,16 @@ function cookieProfileLabel(profile: string, t: T): string {
 function Settings({ api, settings, token, t, onToken, onSaved }: { api: ReturnType<typeof createApiClient>; settings: SettingsResponse | null; token: string; t: T; onToken: (value: string) => void; onSaved: () => void }) {
   const [cookieContent, setCookieContent] = useState('');
   const [cookieProfile, setCookieProfile] = useState('default');
+  const [filenameTemplate, setFilenameTemplate] = useState(filenameTemplatePresets[2].template);
+  const [defaultVideoResolution, setDefaultVideoResolution] = useState('best');
+  const [filenameTemplateStatus, setFilenameTemplateStatus] = useState<string | null>(null);
   const [cookieStatus, setCookieStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (settings?.filename_template) setFilenameTemplate(settings.filename_template);
+    if (settings?.default_video_resolution) setDefaultVideoResolution(settings.default_video_resolution);
+  }, [settings?.filename_template, settings?.default_video_resolution]);
 
   async function saveCookies(content: string) {
     setBusy(true);
@@ -1090,9 +1313,30 @@ function Settings({ api, settings, token, t, onToken, onSaved }: { api: ReturnTy
     setCookieContent(await file.text());
   }
 
+  async function saveFilenameTemplateSetting() {
+    setBusy(true);
+    setFilenameTemplateStatus(null);
+    try {
+      await api.saveFilenameTemplate(filenameTemplate, defaultVideoResolution);
+      setFilenameTemplateStatus(t('filenameTemplateSaved'));
+      onSaved();
+    } catch (err) {
+      setFilenameTemplateStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <div className="panel acrylic"><div className="panel-body settings-grid">
     <label>{t('downloadDir')}{readonlyValue(settings?.download_dir || '')}</label>
     <label>{t('configDir')}{readonlyValue(settings?.config_dir || '')}</label>
+    <label>{t('filenameTemplatePreset')}<select value={filenameTemplatePresets.some((preset) => preset.template === filenameTemplate) ? filenameTemplate : 'custom'} onChange={(event) => { const preset = filenameTemplatePresets.find((item) => item.template === event.target.value); if (preset) setFilenameTemplate(preset.template); }}>
+      {filenameTemplatePresets.map((preset) => <option key={preset.id} value={preset.template}>{preset.template} - {t(preset.descKey)}</option>)}
+      <option value="custom">{t('filenameTemplateCustom')} - {t('filenameTemplateDescCustom')}</option>
+    </select></label>
+    <label className="wide-field">{t('filenameTemplate')}<input value={filenameTemplate} onChange={(event) => setFilenameTemplate(event.target.value)} /></label>
+    <label>{t('defaultVideoResolution')}<select value={defaultVideoResolution} onChange={(event) => setDefaultVideoResolution(event.target.value)}>{videoResolutionOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+    <div className="wide-field toolbar"><button className="primary" onClick={() => void saveFilenameTemplateSetting()} disabled={busy || !filenameTemplate.trim()}>{t('saveSettings')}</button>{filenameTemplateStatus && <span className="muted">{filenameTemplateStatus}</span>}</div>
     <label>{t('queueConcurrency')}{readonlyValue(String(settings?.queue_concurrency || 2))}</label>
     <label>{t('authConfigured')}{readonlyValue(settings?.auth_configured ? t('yes') : t('no'))}</label>
     <label>{t('optionalAuthToken')}<input value={token} placeholder={t('notConfigured')} onChange={(event) => onToken(event.target.value)} /></label>
@@ -1110,19 +1354,38 @@ function Settings({ api, settings, token, t, onToken, onSaved }: { api: ReturnTy
   </div></div>;
 }
 
-function System({ health, settings, t }: { health: HealthResponse | null; settings: SettingsResponse | null; t: T }) {
+function System({ api, health, settings, t, onChanged }: { api: ReturnType<typeof createApiClient>; health: HealthResponse | null; settings: SettingsResponse | null; t: T; onChanged: () => void }) {
+  const [updating, setUpdating] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const details = [
+    ['download_dir', settings?.download_dir || '-'],
+    ['config_dir', settings?.config_dir || '-'],
+    ['queue_concurrency', String(settings?.queue_concurrency || '-')],
+    ['auth_configured', String(settings?.auth_configured || false)],
+    ['yt_dlp', health?.yt_dlp || '-'],
+    ['ffmpeg', health?.ffmpeg || '-'],
+  ];
+  async function updateDependencies() {
+    setUpdating(true);
+    setUpdateStatus(null);
+    try {
+      const result = await api.updateDependencies();
+      setUpdateStatus(`${t('dependenciesUpdated')}: yt-dlp ${result.yt_dlp_version || result.yt_dlp}, ffmpeg ${result.ffmpeg_version || result.ffmpeg}`);
+      onChanged();
+    } catch (err) {
+      setUpdateStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUpdating(false);
+    }
+  }
   return <div className="stack">
+    <div className="toolbar"><button className="primary" onClick={() => void updateDependencies()} disabled={updating}>{updating ? t('working') : t('updateDependencies')}</button>{updateStatus && <span className="muted">{updateStatus}</span>}</div>
     <div className="system-grid">
       <div className="row"><span className={`badge ${health?.healthy ? 'green' : 'amber'}`}>{health?.healthy ? t('healthy') : t('needsAttention')}</span><h2>{t('api')}</h2><p className="muted">{t('fastapiServer')}</p></div>
       <div className="row"><span className={`badge ${health?.yt_dlp !== 'not found' ? 'green' : 'red'}`}>{health?.yt_dlp || t('unknown')}</span><h2>yt-dlp</h2><p className="muted">{t('requiredAnalyze')}</p></div>
       <div className="row"><span className={`badge ${health?.ffmpeg !== 'not found' ? 'green' : 'red'}`}>{health?.ffmpeg !== 'not found' ? t('configured') : t('needsAttention')}</span><h2>ffmpeg</h2><p className="muted">{t('requiredMuxing')}</p></div>
     </div>
-    <div className="panel acrylic"><div className="panel-header"><h2>{t('serverDetails')}</h2><span className="badge">{t('stdout')}</span></div><div className="panel-body"><pre className="log-box">download_dir={settings?.download_dir || '-'}
-config_dir={settings?.config_dir || '-'}
-queue_concurrency={settings?.queue_concurrency || '-'}
-auth_configured={String(settings?.auth_configured || false)}
-yt_dlp={health?.yt_dlp || '-'}
-ffmpeg={health?.ffmpeg || '-'}</pre></div></div>
+    <div className="panel acrylic"><div className="panel-header"><h2>{t('serverDetails')}</h2><span className="badge">{t('stdout')}</span></div><div className="panel-body detail-list">{details.map(([label, value]) => <div className="detail-row" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div></div>
   </div>;
 }
 
