@@ -1,0 +1,23 @@
+name: Star History
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'   # every Sunday at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Generate Star History Chart
+        uses: narayann7/star-history-action@v1.0.4
+        with:
+          repos: ${{ github.repository }}
+          output-dir: branding/svg
+          commit: true
+          commit-message: "chore: update star history chart"
