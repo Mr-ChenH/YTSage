@@ -12,6 +12,10 @@ __pycache__/
 build/
 dist/
 node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+docs/
 *.deb
 
 # Logs and misc
@@ -33,3 +37,5 @@ venv/
 # Test artifacts
 *.test
 *.tmp
+.tmp*/
+.dev-data/

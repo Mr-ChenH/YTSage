@@ -5,16 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ytsage"
 version = "5.2.0"
-description = "Modern YouTube downloader with a clean PySide6 interface."
+description = "Self-hosted YTSage server with a React-style web interface for yt-dlp downloads."
 authors = [
     { name = "oop7", email = "oop7_support@proton.me" },
 ]
 dependencies = [
-    "PySide6>=6.10.1",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.0.0",
+    "yt-dlp>=2024.1.0",
+    "imageio-ffmpeg>=0.5.1",
     "requests>=2.32.5",
-    "pillow>=12.0.0",
     "packaging>=25.0",
-    "markdown>=3.10",
     "loguru>=0.7.3",
     "setuptools>=80.9.0",
 ]
@@ -30,24 +32,18 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     'Programming Language :: Python :: 3.14',
     "Intended Audience :: End Users/Desktop",
-    "Operating System :: OS Independent",
-    "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
-    "Operating System :: MacOS",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Multimedia :: Video",
     "Topic :: Multimedia :: Sound/Audio",
-    "Topic :: Desktop Environment",
-    "Environment :: X11 Applications :: Qt",
-    "Environment :: Win32 (MS Windows)",
-    "Environment :: MacOS X"
+    "Framework :: FastAPI",
 ]
 
-keywords = ["youtube", "downloader", "video", "audio", "PySide6", "yt-dlp", "GUI"]
+keywords = ["youtube", "downloader", "video", "audio", "yt-dlp", "FastAPI", "Docker", "web-ui"]
 
 
 [project.scripts]
-ytsage = "ytsage.main:main"
+ytsage = "ytsage.server.app:main"
 
 [project.urls]
 Homepage = "https://github.com/oop7/YTSage"
@@ -65,4 +61,6 @@ ytsage = [
     "assets/Icon/icon.png",
     "assets/sound/notification.mp3",
     "languages/*.json",
+    "server/static/*",
+    "server/static/assets/*",
 ]

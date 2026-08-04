@@ -1,0 +1,17 @@
+services:
+  ytsage:
+    build: .
+    container_name: ytsage-server
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: UTC
+      YTSAGE_DOWNLOAD_DIR: /downloads
+      YTSAGE_CONFIG_DIR: /config
+      YTSAGE_QUEUE_CONCURRENCY: "2"
+      # Optional for non-LAN deployments:
+      # YTSAGE_AUTH_TOKEN: change-me
+    volumes:
+      - ./data/config:/config
+      - ./data/downloads:/downloads
+    restart: unless-stopped
