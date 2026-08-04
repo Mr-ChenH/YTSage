@@ -315,9 +315,9 @@ npm --prefix frontend run build
 
 重新构建前端并重启服务后，请强制刷新浏览器页面。构建后的资源文件名每次可能变化。
 
-### Ctrl+C 显示关闭日志
+### Ctrl+C 关闭服务
 
-用 Ctrl+C 停止 Uvicorn 时出现 `KeyboardInterrupt` 是正常退出信号。应用会在关闭时处理 WebSocket 取消并清理事件订阅。
+打包后的 `ytsage` 命令使用了静默 Uvicorn 服务包装器，Ctrl+C 会优雅关闭服务，不再重放 `KeyboardInterrupt` 堆栈。如果直接运行 Uvicorn，你本地的 Uvicorn/Python 组合仍可能打印自己的关闭堆栈。
 
 <a id="项目结构"></a>
 ## 项目结构

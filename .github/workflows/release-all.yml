@@ -1,4 +1,4 @@
-name: Create All Releases
+name: Create Release
 
 on:
   workflow_dispatch:
@@ -12,24 +12,6 @@ permissions:
   contents: write
 
 jobs:
-  release-windows:
-    uses: ./.github/workflows/build-windows.yml
-    with:
-      version: ${{ inputs.version }}
-    secrets: inherit
-
-  release-linux:
-    uses: ./.github/workflows/build-linux.yml
-    with:
-      version: ${{ inputs.version }}
-    secrets: inherit
-
-  release-macos:
-    uses: ./.github/workflows/build-macos.yml
-    with:
-      version: ${{ inputs.version }}
-    secrets: inherit
-
   release-pypi:
     uses: ./.github/workflows/build-pypi.yml
     with:

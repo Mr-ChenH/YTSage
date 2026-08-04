@@ -2,5 +2,4 @@ include README.md
 include LICENSE
 include pyproject.toml
 recursive-include readme-translations *
-recursive-include ytsage/assets *
-recursive-include ytsage/languages *
+recursive-include ytsage/server/static *

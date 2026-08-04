@@ -31,7 +31,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     'Programming Language :: Python :: 3.14',
-    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Multimedia :: Video",
@@ -58,9 +58,6 @@ include = ["ytsage*"]
 
 [tool.setuptools.package-data]
 ytsage = [
-    "assets/Icon/icon.png",
-    "assets/sound/notification.mp3",
-    "languages/*.json",
     "server/static/*",
     "server/static/assets/*",
 ]

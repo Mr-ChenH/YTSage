@@ -14,9 +14,8 @@ assignees: ''
   - Specific error messages (if any)
 -->
 
-## 🔗 Affected Video URL
-<!-- Paste the YouTube URL that caused the issue -->
-<!-- Example: https://www.youtube.com/watch?v=ABC123XYZ -->
+## 🔗 Affected URL
+<!-- Paste the media URL or API/UI URL that caused the issue -->
 
 ## 🔄 Steps to Reproduce
 1. <!-- Step 1 (e.g., "Pasted the URL above into YTSage") -->
@@ -30,26 +29,20 @@ assignees: ''
 <!-- What actually happened? -->
 
 ## 🖥️ Environment
-- **YTSage Version**: <!-- e.g., v4.5.0 -->
+- **YTSage Version**: <!-- e.g., v5.4.5 -->
 - **yt-dlp Version**: <!-- e.g., 2025.11.12 -->
 - **OS**: <!-- e.g., Windows 11, macOS Ventura, Ubuntu 22.04 -->
 - **Python Version**: <!-- e.g., 3.13.6 -->
-- **Deno Version**: <!-- e.g., 2.5.6 -->
 - **FFmpeg Version**: <!-- Run `ffmpeg -version` -->
-- **Installation Method**: <!-- - pip - executable - manual -->
+- **Installation Method**: <!-- pip, Docker, source -->
+- **Browser**: <!-- e.g., Chrome, Edge, Firefox -->
 
-> 💡 You can find most of these details by clicking the About button to open the About dialog.
+> Most server details are visible on the System page.
 
 ## 📸 Screenshots/Logs
 <!-- 
-  Attach screenshots (for GUI issues) or terminal logs (for CLI errors).
-  
-  To collect log files:
-  1. Open YTSage and reproduce the issue.
-  2. Click the **About** button.
-  3. Click **Logs** (📂) to open the logs folder.
-  4. Attach `ytsage.log` and `ytsage_error.log`.
-  
+  Attach screenshots for Web UI issues or terminal/server logs for backend errors.
+
   Use ``` to format logs:
 -->
 
@@ -64,7 +57,7 @@ assignees: ''
 
 **Checklist**
 - [ ] I have searched existing issues to avoid duplicates
-- [ ] I have provided **the affected YouTube URL**
+- [ ] I have provided the affected URL when relevant
 - [ ] I have included clear steps to reproduce
 - [ ] I have attached relevant screenshots/logs
 - [ ] I have provided all required environment details

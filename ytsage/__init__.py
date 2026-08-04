@@ -1,7 +1,7 @@
 """
-YTSage - YouTube Video Downloader
+YTSage - self-hosted yt-dlp download server.
 
-A modern, user-friendly YouTube video downloader built with PySide6.
+The package entry point starts the FastAPI Web service.
 """
 
 __version__ = "5.4.5"

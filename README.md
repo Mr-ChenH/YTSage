@@ -315,9 +315,9 @@ Many sites serve high quality video and audio separately. FFmpeg is required to 
 
 After rebuilding frontend assets and restarting the server, force refresh the browser page. The generated asset filenames change on each build.
 
-### Ctrl+C Shows Shutdown Logs
+### Ctrl+C Shutdown
 
-`KeyboardInterrupt` is normal when stopping Uvicorn with Ctrl+C. The application handles WebSocket cancellation during shutdown and unsubscribes event listeners cleanly.
+The packaged `ytsage` command uses a quiet Uvicorn server wrapper so Ctrl+C performs a graceful shutdown without replaying a `KeyboardInterrupt` traceback. If you run Uvicorn directly, your local Uvicorn/Python combination may still print its own shutdown stack.
 
 <a id="project-structure"></a>
 ## Project Structure

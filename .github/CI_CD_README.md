@@ -1,116 +1,47 @@
 # YTSage CI/CD Workflow
 
-This repository uses GitHub Actions to automatically build and release YTSage for multiple platforms. The workflow is designed to be manually triggered, allowing for flexibility in building specific versions or platforms on demand.
+This repository is focused on the self-hosted YTSage server package. Desktop executable packaging has been removed.
 
-## How It Works
+## Workflows
 
-### Trigger
-The workflows are triggered manually via the GitHub Actions "Workflow Dispatch" interface. This allows you to specify the version number explicitly (e.g., `1.0.0`) at runtime.
+- `release-all.yml`: Manual release entry point. It currently delegates to the PyPI package workflow.
+- `build-pypi.yml`: Builds the Python source distribution and wheel, then uploads them to a draft GitHub release.
+- `star-history.yml`: Updates generated star history assets.
 
-### Workflows
-- **Create All Releases** (`release-all.yml`): The master workflow. Triggering this will automatically run the Windows, Linux, macOS, and PyPI builds in parallel with the version you provide.
-- **Platform Specific**: You can also trigger `Build Windows Release`, `Build Linux Release`, `Build macOS Release`, or `Build PyPI Package` individually.
-- **Star History** (`star-history.yml`): Automatically generates and updates the star history chart every week (and can be run manually).
+## Creating A Release
 
-### Build Process
-1. **Setup**: Uses Python 3.13 on all platforms
-2. **Builds**: Creates platform-specific executables using cx_Freeze
-3. **Packages**: Generates native package formats for each platform
-4. **Release**: Creates or updates a draft GitHub release with the artifacts
+1. Go to the repository Actions tab.
+2. Select `Create Release`.
+3. Click `Run workflow`.
+4. Enter a version such as `5.4.5`.
+5. Review the draft release after the package artifacts are uploaded.
 
-## Usage
+## Build Notes
 
-### Creating a Full Release (Recommended)
+The package entry point is:
 
-1. Go to the **Actions** tab in the GitHub repository.
-2. Select **"Create All Releases"** from the left sidebar.
-3. Click **Run workflow**.
-4. Enter the **Version name** (e.g., `1.0.0`).
-   > *Note: Do not include the 'v' prefix in the input field unless you want your filenames to be `v1.0.0`.*
-5. Click the green **Run workflow** button.
-6. The system will trigger the Windows, Linux, and macOS jobs. Once complete, a draft release will be available in the Releases section.
+```text
+ytsage = ytsage.server.app:main
+```
 
-### Creating a Single Platform Build
+The package includes the built Web UI from:
 
-1. Go to the **Actions** tab.
-2. Select the specific workflow (e.g., **"Build Windows Release"**).
-3. Click **Run workflow** and enter the version.
-4. Only that specific platform's artifacts will be built and added to the release.
+```text
+ytsage/server/static/
+```
 
-### Release Artifacts
+Before publishing a release after frontend changes, rebuild the frontend and copy the output into the server static directory:
 
-The workflow creates the following files based on the platform:
+```bash
+npm --prefix frontend run build
+rm -rf ytsage/server/static/*
+cp -R frontend/dist/* ytsage/server/static/
+```
 
-#### Windows
-- `YTSage-v{version}-portable.zip` - Standard portable version
-- `YTSage-v{version}-ffmpeg-portable.zip` - FFmpeg bundle portable
-- `YTSage-v{version}-Setup.exe` - Standard installer
-- `YTSage-v{version}-ffmpeg-Setup.exe` - FFmpeg bundle installer
+Recommended validation before release:
 
-#### Linux
-- `YTSage-v{version}-{arch}.AppImage` - AppImage portable (x86_64, aarch64)
-- `YTSage-v{version}-{arch}.rpm` - RPM package
-- `YTSage-v{version}-{arch}.deb` - Debian package
-- `YTSage-v{version}-{arch}.flatpak` - Flatpak bundle
-
-#### macOS
-- `YTSage-v{version}-arm64.app.zip` - Zipped application bundle
-- `YTSage-v{version}-arm64.dmg` - Disk image installer
-
-#### PyPI
-- `ytsage-{version}-py3-none-any.whl` - Python Wheel
-- `ytsage-{version}.tar.gz` - Source Distribution
-
-## Workflow Features
-
-- **PyPI**: Standard Python build system (Wheel & Source)
-### Multi-Platform Support
-- **Windows**: Uses PowerShell scripts with cx_Freeze
-- **Linux**: Uses Bash scripts with cx_Freeze, creates AppImage, RPM, and DEB
-- **macOS**: Matrix build for both Intel (x64) and Apple Silicon (arm64)
-
-### Manual Versioning
-- Version is strictly controlled by the input you provide at runtime.
-- No longer dependent on git tags, reducing accidental releases.
- 
-### Caching
-- Python dependencies and virtual environments are cached to speed up builds.
-
-### Error Handling
-- Comprehensive error checking at each step.
-- Artifact verification before upload.
-
-### Security
-- Uses official GitHub Actions.
-- Secure token handling via `secrets: inherit` for the master workflow.
-
-## Manual Intervention
-
-### After Workflow Completion
-1. **Review the draft release** in GitHub.
-2. **Test the artifacts** if needed.
-3. **Edit release notes** to add changelogs or descriptions.
-4. **Publish the release** when ready (change from Draft to Published).
-
-## Configuration
-
-### Modifying the Workflow
-The workflow files are located in `.github/workflows/`:
-
-- `release-all.yml` - Master workflow that orchestrates the others
-- `build-windows.yml` - Windows builds logic
-- `build-linux.yml` - Linux builds logic
-- `build-pypi.yml` - PyPI build logic
-- `build-macos.yml` - macOS builds logic
-- `star-history.yml` - Generates the star history chart
-
-### Key Configuration Options
-- `PYTHON_VERSION`: Python version (currently 3.13)
-- `version` input: Defined as a required string in all workflows.
-
-## Notes
-
-- All builds use cx_Freeze for packaging.
-- FFmpeg binaries are bundled where needed (Windows).
-- Screenshots are removed from builds to reduce size.
-- Draft releases allow for review before publication.
+```bash
+python -m py_compile ytsage/server/app.py ytsage/server/models.py ytsage/server/services/download_service.py
+npm --prefix frontend run build
+python -m build
+```

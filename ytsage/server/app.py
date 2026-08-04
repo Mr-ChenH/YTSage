@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
+import signal
+import threading
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated
 
 import uvicorn
+from uvicorn.server import HANDLED_SIGNALS
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -236,12 +239,36 @@ def _is_writable(path: Path) -> bool:
         return False
 
 
+class QuietSignalServer(uvicorn.Server):
+    """Uvicorn server variant that avoids replaying Ctrl+C on graceful shutdown.
+
+    Uvicorn re-raises captured signals after shutdown so command-line callers get
+    the usual KeyboardInterrupt semantics. On Windows/Python 3.14 this can also
+    produce noisy ASGI lifespan CancelledError tracebacks during an otherwise
+    clean shutdown. The service CLI prefers quiet, graceful termination.
+    """
+
+    @contextmanager
+    def capture_signals(self):
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
+        original_handlers = {sig: signal.signal(sig, self.handle_exit) for sig in HANDLED_SIGNALS}
+        try:
+            yield
+        finally:
+            for sig, handler in original_handlers.items():
+                signal.signal(sig, handler)
+            self._captured_signals.clear()
+
+
 app = create_app()
 
 
 def main() -> None:
     config = load_config()
-    uvicorn.run("ytsage.server.app:app", host=config.host, port=config.port)
+    server_config = uvicorn.Config("ytsage.server.app:app", host=config.host, port=config.port)
+    QuietSignalServer(server_config).run()
 
 
 if __name__ == "__main__":
