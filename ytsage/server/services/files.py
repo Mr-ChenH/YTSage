@@ -231,7 +231,7 @@ def folder_manifest_response(root: Path, folder: Path, archive_name: str, reques
         extension = "txt"
     else:
         content = "\n".join(
-            f'{entry["url"]}\n  out={entry["output"]}\n  split=8\n  max-connection-per-server=8\n  continue=true'
+            f'{entry["url"]}\n  dir=.\n  out={entry["output"]}\n  split=8\n  max-connection-per-server=8\n  continue=true'
             for entry in entries
         ) + ("\n" if entries else "")
         media_type = "text/plain; charset=utf-8"

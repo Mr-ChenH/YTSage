@@ -609,7 +609,22 @@ tr.selected td { background: rgba(15,108,189,0.08); }
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto auto auto;
   align-items: end;
-  width: min(720px, 100%);
+  width: min(860px, 100%);
+}
+.manifest-export {
+  display: inline-grid;
+  grid-template-columns: minmax(96px, auto) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.manifest-export select {
+  min-height: 34px;
+  padding-block: 0;
+}
+.manifest-export button,
+.manifest-export .button-link {
+  min-height: 34px;
+  white-space: nowrap;
 }
 .pagination-row {
   display: flex;
@@ -819,6 +834,7 @@ video { aspect-ratio: 16 / 9; }
   .file-browser-grid { height: auto; }
   .watch-list, .watch-list-body, .file-tree-panel, .file-tree-list, .file-media-panel, .file-media-panel > .panel-body { max-height: none; overflow: visible; }
   .file-toolbar-inline { grid-template-columns: 1fr; }
+  .manifest-export { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {

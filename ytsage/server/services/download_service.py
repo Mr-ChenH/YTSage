@@ -39,7 +39,7 @@ def build_download_command(request: CreateTaskRequest, download_dir: Path) -> li
         if request.audio_normalization:
             cmd.extend(["--postprocessor-args", "ffmpeg:-filter:a loudnorm=I=-16:LRA=11:TP=-1.5"])
     elif request.output_format:
-        cmd.extend(["--merge-output-format", request.output_format])
+        cmd.extend(["--merge-output-format", request.output_format, "--remux-video", request.output_format])
 
     if request.subtitle_langs:
         cmd.extend(["--write-subs", "--sub-langs", ",".join(request.subtitle_langs)])

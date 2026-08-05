@@ -741,6 +741,8 @@ function History({ entries, api, t, onChanged, onOpenFiles }: { entries: History
   </div>)}</div></div>;
 }
 
+type ManifestFormat = 'aria2' | 'txt' | 'json';
+
 function Files({ library, token, api, t, onLoaded, onPlay }: { library: FileListResponse | null; token: string; api: ReturnType<typeof createApiClient>; t: T; onLoaded: (library: FileListResponse) => void; onPlay: (file: FileEntry, queue: FileEntry[], folder: string) => void }) {
   const [query, setQuery] = useState('');
   const [folder, setFolder] = useState('');
@@ -757,7 +759,8 @@ function Files({ library, token, api, t, onLoaded, onPlay }: { library: FileList
   const authSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
   const fileUrl = (url?: string | null) => url ? `${url}${authSuffix}` : '#';
   const folderUrl = folder ? `${api.downloadFolderUrl(folder)}${token ? `&token=${encodeURIComponent(token)}` : ''}` : '#';
-  const manifestUrl = folder ? `${api.folderManifestUrl(folder)}${token ? `&token=${encodeURIComponent(token)}` : ''}` : '#';
+  const manifestUrl = (format: ManifestFormat) => folder ? `${api.folderManifestUrl(folder, format)}${token ? `&token=${encodeURIComponent(token)}` : ''}` : '#';
+  const aria2Filename = `${(folder.split('/').pop() || folder || 'downloads')}.aria2.txt`;
   async function load(nextOffset = 0, nextQuery = query, nextFolder = folder) {
     onLoaded(await api.files(nextQuery, nextFolder, nextOffset, limit));
   }
@@ -780,13 +783,33 @@ function Files({ library, token, api, t, onLoaded, onPlay }: { library: FileList
     <section className="panel acrylic file-media-panel"><div className="panel-header"><div className="stack"><h2>{t('mediaInFolder')}</h2><span className="muted">{folder || t('allFolders')} - {t('directMediaOnly')}</span></div><div className="toolbar file-toolbar-inline">
       <input value={query} placeholder={t('searchFiles')} onChange={(event) => setQuery(event.target.value)} />
       <button onClick={() => { setMediaPage(1); void load(0); }}>{t('search')}</button>
-      <a className={`button-link ${folder ? '' : 'disabled'}`} href={manifestUrl} aria-disabled={!folder} onClick={(event) => { if (!folder) event.preventDefault(); }}>{t('downloadManifest')}</a>
+      <ManifestExport disabled={!folder} manifestUrl={manifestUrl} aria2Filename={aria2Filename} t={t} />
       <a className={`button-link ${folder ? '' : 'disabled'}`} href={folderUrl} aria-disabled={!folder} onClick={(event) => { if (!folder) event.preventDefault(); }}>{t('downloadFolder')}</a>
     </div></div><div className="panel-body media-table-body">
       {!mediaFiles.length && <div className="empty-state">{t('noFiles')}</div>}
       {!!mediaFiles.length && <div className="media-table-wrap"><table className="media-table"><thead><tr><th>{t('title')}</th><th>{t('type')}</th><th>{t('size')}</th><th></th></tr></thead><tbody>{visibleMediaFiles.map((file) => <tr key={file.id}><td><strong>{file.name}</strong></td><td><span className="badge green">{mediaLabel(file.media_type, t)}</span></td><td>{formatBytes(file.size)}</td><td><div className="toolbar compact-actions"><button onClick={() => onPlay(file, mediaFiles, folder)}>{t('play')}</button><a className="button-link" href={fileUrl(file.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(file.download_url))}>{t('copyLink')}</button></div></td></tr>)}</tbody></table></div>}
       <div className="pagination-row"><button onClick={() => setMediaPage(Math.max(1, normalizedMediaPage - 1))} disabled={normalizedMediaPage <= 1}>{t('previousPage')}</button><span className="muted">{formatPageInfo(t('pageInfo'), normalizedMediaPage, mediaPages, mediaFiles.length)}</span><div className="page-list" aria-label="Pagination">{mediaPageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`ellipsis-${index}`}>...</span> : <button className={item === normalizedMediaPage ? 'active' : ''} key={item} onClick={() => setMediaPage(item)} disabled={item === normalizedMediaPage} aria-current={item === normalizedMediaPage ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => setMediaPage(Math.min(mediaPages, normalizedMediaPage + 1))} disabled={normalizedMediaPage >= mediaPages}>{t('nextPage')}</button></div>
     </div></section>
+  </div>;
+}
+
+function ManifestExport({ disabled, manifestUrl, aria2Filename, t }: { disabled: boolean; manifestUrl: (format: ManifestFormat) => string; aria2Filename: string; t: T }) {
+  const [format, setFormat] = useState<ManifestFormat>('aria2');
+  const [copied, setCopied] = useState(false);
+  const url = manifestUrl(format);
+  async function copyCommand() {
+    await navigator.clipboard?.writeText(`aria2c -d . -i "${aria2Filename}" --continue=true --split=8 --max-connection-per-server=8`);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+  return <div className="manifest-export">
+    <select value={format} onChange={(event) => setFormat(event.target.value as ManifestFormat)} disabled={disabled} aria-label={t('manifestFormat')}>
+      <option value="aria2">{t('manifestAria2')}</option>
+      <option value="txt">{t('manifestTxt')}</option>
+      <option value="json">{t('manifestJson')}</option>
+    </select>
+    <a className={`button-link ${disabled ? 'disabled' : ''}`} href={url} aria-disabled={disabled} onClick={(event) => { if (disabled) event.preventDefault(); }}>{t('exportManifest')}</a>
+    <button disabled={disabled || format !== 'aria2'} onClick={() => void copyCommand()}>{copied ? t('copied') : t('copyAria2Command')}</button>
   </div>;
 }
 

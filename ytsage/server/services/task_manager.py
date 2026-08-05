@@ -283,8 +283,16 @@ class TaskManager:
             self.processes.pop(task.id, None)
 
         new_files = discover_new_files(self.config.download_dir, before)
-        output_path = str(new_files[0]) if new_files else progress.current_filename
+        output_path = self._select_output_file(new_files, request) or progress.current_filename
         return output_tail, return_code, output_path, progress
+
+    def _select_output_file(self, files: list[Path], request: CreateTaskRequest) -> str | None:
+        if not files:
+            return None
+        expected_suffix = f".{request.audio_format if request.mode == 'audio' else request.output_format}".lower()
+        matching_files = [path for path in files if path.suffix.lower() == expected_suffix]
+        selected = matching_files[0] if matching_files else files[0]
+        return str(selected)
 
     def _parse_queue_item(self, queue_item: str) -> tuple[str, int | None]:
         task_id, separator, retry_index_text = queue_item.partition(":")
