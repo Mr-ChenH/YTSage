@@ -257,7 +257,7 @@ docker image prune
 如果需要固定版本以避免自动切换，可以使用版本标签，例如：
 
 ```yaml
-image: xmoli/ytsage:5.4.5
+image: xmoli/ytsage:5.4.6
 ```
 
 ## 健康检查
