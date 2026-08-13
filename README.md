@@ -1,374 +1,494 @@
 <div align="center">
-<img src="branding/svg/ytsage-wordmark.svg" width="180" height="180" alt="YTSage icon">
+  <img src="branding/svg/ytsage-wordmark.svg" width="180" height="180" alt="YTSage">
 
 # YTSage
 
-**Self-hosted yt-dlp download server with a modern Web UI.**
+**基于 yt-dlp 的自托管音视频下载与媒体管理服务**
 
-This fork is based on the upstream [oop7/YTSage](https://github.com/oop7/YTSage) project and has been adapted toward a self-hosted Web service workflow.
+在浏览器中分析媒体链接，下载视频、音频、字幕和播放列表，并集中管理任务、历史记录与本地媒体文件。
 
-Analyze media links, download video/audio/subtitles, manage playlists and tasks, browse downloaded files, and play local media from the browser.
+[![Docker Image](https://img.shields.io/badge/Docker-xmoli%2Fytsage-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/xmoli/ytsage)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Web_API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<img src="branding/screenshots/main.png" width="800" alt="YTSage Web UI screenshot">
+[快速开始](#快速开始) · [功能](#功能) · [配置](#配置) · [更新](#更新) · [常见问题](#常见问题) · [开发](#本地开发)
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-1f2937?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-server-1f2937?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-web_UI-1f2937?style=for-the-badge&logo=react&logoColor=white)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-1f2937?style=for-the-badge&logo=opensource&logoColor=white)](https://opensource.org/licenses/MIT)
-
-<a href="#features">Features</a> -
-<a href="#quick-start">Quick Start</a> -
-<a href="#configuration">Configuration</a> -
-<a href="#development">Development</a> -
-<a href="#api">API</a> -
-<a href="#troubleshooting">Troubleshooting</a>
-
+<img src="branding/screenshots/main.png" width="900" alt="YTSage Web 界面">
 </div>
 
----
+## 项目简介
 
-<a id="overview"></a>
-## Overview
+YTSage 将 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 和 [FFmpeg](https://ffmpeg.org/) 封装为一个可自托管的 Web 服务。后端负责链接分析、下载队列、任务状态和文件访问，前端提供下载工作台、媒体文件库及在线播放器。
 
-YTSage is now focused on the service-side experience: a FastAPI server, a built React Web UI, persistent task/history storage, and local media management around `yt-dlp` and `ffmpeg`.
+项目适合以下场景：
 
-The default package entry point starts the Web service. The UI is served by the backend, so after starting the server you use YTSage from a browser instead of a desktop window.
+- 在 NAS、家庭服务器或 Linux 主机上部署统一的下载服务
+- 从电脑或手机浏览器提交下载任务
+- 下载视频、提取音频、保存字幕或选择播放列表条目
+- 通过浏览器管理、下载和播放服务器上的媒体文件
+- 使用 Docker 持久化配置、历史记录、Cookies 和下载内容
 
-Current stack:
+> [!NOTE]
+> 本项目基于上游 [oop7/YTSage](https://github.com/oop7/YTSage) 修改，当前版本侧重自托管 Web 服务体验。
 
-- Backend: FastAPI, Uvicorn, Pydantic, SQLite storage
-- Downloader: yt-dlp
-- Media processing: ffmpeg, provided through `imageio-ffmpeg` when needed
-- Frontend: React, Vite, ArtPlayer
-- Runtime settings: environment variables plus `server-settings.json`
+## 功能
 
-<a id="features"></a>
-## Features
+### 下载与格式处理
 
-### Download Workspace
+- 支持 yt-dlp 可解析的媒体链接
+- 下载视频、音频或字幕
+- 选择具体格式、视频封装格式和音频输出格式
+- 支持 `mp4`、`webm`、`mkv` 视频容器
+- 支持 `mp3`、`m4a`、`opus`、`flac`、`wav` 音频格式
+- 保存缩略图、描述信息并嵌入章节
+- 字幕语言选择与字幕合并
+- 音频标准化、下载限速、代理和分片并发设置
+- 自定义 yt-dlp 文件名模板和默认视频清晰度
 
-- Analyze URLs supported by yt-dlp.
-- Download video, audio, or subtitles.
-- Select a format from the analyzed format list.
-- Choose video container: `mp4`, `webm`, `mkv`.
-- Choose audio output: `mp3`, `m4a`, `opus`, `flac`, `wav`.
-- Select subtitle languages from the analysis result.
-- Merge subtitles, save thumbnails, save descriptions, embed chapters, and normalize audio.
-- Configure proxy URL per task.
-- Configure concurrent fragment downloads per task.
-- Use service default video resolution for automatic format selection.
+### 播放列表与任务
 
-### Playlist Handling
+- 分析播放列表并选择需要下载的条目
+- 显示播放列表条目的下载状态
+- 单个条目失败时继续处理后续内容
+- 单独重试失败的播放列表条目
+- 队列化执行任务，支持调整服务并发数
+- 通过 WebSocket 实时更新任务进度
+- 支持取消、删除和清理任务记录
+- 服务重启后自动标记被中断的任务
 
-- Analyze playlists and select specific entries before creating a task.
-- Playlist pagination with direct page numbers.
-- Per-entry task status: pending, downloading, downloaded, failed.
-- Playlist downloads continue after individual item failures when supported by yt-dlp.
-- Retry a failed playlist item inside the original task record.
+### 文件与播放
 
-### Task And History Management
+- 目录树、文件搜索和分页浏览
+- 单文件下载与 HTTP Range 请求
+- 将整个目录打包为 ZIP 下载
+- 导出 `aria2`、`txt` 或 `json` 格式的目录清单
+- 使用 ArtPlayer 在线播放已下载的视频和音频
+- 按目录生成播放队列
+- 支持倍速、画中画、快捷键及全屏播放
 
-- Queue-based task execution with configurable concurrency.
-- Realtime task updates through WebSocket plus polling fallback.
-- Cancel, delete, and clear finished task records.
-- Completed and failed downloads are stored in history.
-- Interrupted tasks are marked after server restart.
+### 配置与安全
 
-### File Library
+- SQLite 持久化任务和下载历史
+- 管理默认、Bilibili 和 YouTube Cookies
+- 可选 Bearer Token 访问控制
+- 查看服务、目录、yt-dlp 和 FFmpeg 健康状态
+- 在系统页面更新 yt-dlp 和 FFmpeg 辅助依赖
+- 中文和英文 Web 界面
 
-- Browse the download root as a left folder tree and right media table.
-- Search and paginate media files.
-- Download individual files with HTTP Range support.
-- Download a selected folder as a ZIP archive.
-- Export folder manifests as `aria2`, `txt`, or `json`.
-- aria2 manifests include multi-connection options for resumable batch downloads.
+## 快速开始
 
-### Playback Page
+推荐使用 Docker Compose 部署。镜像已经包含前端、后端、yt-dlp 和 FFmpeg，不需要额外安装运行环境。
 
-- Dedicated playback page separate from the file browser.
-- YouTube-style layout with a main player and right-side playlist.
-- Select a download directory as the playback queue source.
-- Play local video and audio files through ArtPlayer.
-- In-player controls include speed selection, fullscreen, web fullscreen, hotkeys, and PiP for video.
+### Docker Compose
 
-### Settings And System
+创建 `docker-compose.yml`：
 
-- Save filename template presets or a custom yt-dlp output template.
-- Save default video resolution.
-- Manage cookies for default, Bilibili, and YouTube profiles.
-- View server health, download/config paths, queue concurrency, auth status, yt-dlp version, and ffmpeg status.
-- Install or update runtime dependencies from the system page.
-
-<a id="quick-start"></a>
-## Quick Start
-
-### Install From PyPI
-
-```bash
-pip install ytsage
+```yaml
+services:
+  ytsage:
+    image: xmoli/ytsage:latest
+    container_name: ytsage-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Asia/Shanghai
+      # 服务暴露到非可信网络时建议启用：
+      # YTSAGE_AUTH_TOKEN: change-this-token
+    volumes:
+      - ./data/config:/config
+      - ./data/downloads:/downloads
 ```
 
-Start the server:
+创建持久化目录并启动：
 
 ```bash
-ytsage
+mkdir -p data/config data/downloads
+sudo chown -R 10001:10001 data/config data/downloads
+docker compose up -d
 ```
 
-Open the Web UI:
+浏览器打开：
 
 ```text
-http://127.0.0.1:8080
+http://服务器地址:8080
 ```
 
-### Run From Source
+查看容器状态和日志：
 
 ```bash
-git clone https://github.com/oop7/YTSage.git
+docker compose ps
+docker compose logs -f
+```
+
+### Docker CLI
+
+```bash
+mkdir -p data/config data/downloads
+sudo chown -R 10001:10001 data/config data/downloads
+
+docker run -d \
+  --name ytsage-server \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e TZ=Asia/Shanghai \
+  -v "$(pwd)/data/config:/config" \
+  -v "$(pwd)/data/downloads:/downloads" \
+  xmoli/ytsage:latest
+```
+
+### 从源码构建镜像
+
+```bash
+git clone https://github.com/Mr-ChenH/YTSage.git
 cd YTSage
-pip install .
-ytsage
+mkdir -p data/config data/downloads
+sudo chown -R 10001:10001 data/config data/downloads
+docker compose up -d --build
 ```
 
-You can also run the server module directly:
+## 数据持久化
 
-```bash
-python -m ytsage.server.app
-```
+容器使用两个持久化目录：
 
-<a id="configuration"></a>
-## Configuration
+| 容器路径 | Compose 默认映射 | 内容 |
+|---|---|---|
+| `/config` | `./data/config` | SQLite 数据库、Cookies 和界面设置 |
+| `/downloads` | `./data/downloads` | 下载完成及下载中的媒体文件 |
 
-YTSage reads configuration from environment variables. For local development, it also loads a project-root `.env` file without overriding variables already set in the shell.
+删除或重新创建容器不会删除宿主机上的这两个目录。升级前建议备份 `data/config`。
 
-Create a local `.env` file:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Default `.env.example`:
+Docker 镜像默认以非 root 用户运行：
 
 ```text
-YTSAGE_CONFIG_DIR=.dev-data/config
-YTSAGE_DOWNLOAD_DIR=.dev-data/downloads
-YTSAGE_QUEUE_CONCURRENCY=2
-YTSAGE_HOST=127.0.0.1
-YTSAGE_PORT=8080
-# YTSAGE_AUTH_TOKEN=change-me
+UID=10001
+GID=10001
 ```
 
-Supported variables:
+如果健康检查显示目录不可写，执行：
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `YTSAGE_CONFIG_DIR` | Config, database, cookies, and service settings directory | platform config path |
-| `YTSAGE_DOWNLOAD_DIR` | Download output directory | user Downloads/YTSage |
-| `YTSAGE_QUEUE_CONCURRENCY` | Number of concurrent worker tasks | `2` |
-| `YTSAGE_HOST` | Server bind host | `127.0.0.1` |
-| `YTSAGE_PORT` | Server port | `8080` |
-| `YTSAGE_AUTH_TOKEN` | Optional bearer token for API/UI access | unset |
-| `YTSAGE_AUTO_INSTALL_DEPS` | Auto-install missing yt-dlp/ffmpeg helpers on startup | `1` |
+```bash
+sudo chown -R 10001:10001 data/config data/downloads
+```
 
-Persistent UI settings are stored in `server-settings.json` under `YTSAGE_CONFIG_DIR`.
+如果主机环境无法修改目录所有者，也可以根据实际安全要求授予目录写权限，但不建议长期使用过宽的权限。
 
-<a id="usage"></a>
-## Usage
+## 配置
 
-### Create A Download
+所有配置均为可选环境变量。Docker 镜像已经提供适合容器运行的默认值。
 
-1. Open the Web UI.
-2. Paste a URL in the Download page.
-3. Click Analyze.
-4. Choose video, audio, or subtitles.
-5. Select output options.
-6. For playlists, choose the entries you want from the playlist table.
-7. Click Create Download Task.
+| 环境变量 | 默认值 | 说明 |
+|---|---:|---|
+| `YTSAGE_HOST` | `0.0.0.0` | 服务监听地址 |
+| `YTSAGE_PORT` | `8080` | 容器内服务端口 |
+| `YTSAGE_CONFIG_DIR` | `/config` | 配置、数据库和 Cookies 目录 |
+| `YTSAGE_DOWNLOAD_DIR` | `/downloads` | 下载文件目录 |
+| `YTSAGE_QUEUE_CONCURRENCY` | `2` | 同时执行的任务数，可选范围 `1` 至 `8` |
+| `YTSAGE_AUTH_TOKEN` | 未设置 | 可选 Bearer Token；未设置时不启用认证 |
+| `YTSAGE_AUTO_INSTALL_DEPS` | `1` | 是否在启动时尝试补充缺失的运行依赖 |
+| `TZ` | `UTC` | 容器时区，使用 IANA 时区名称 |
 
-### Play Downloaded Media
+通常无需设置目录和端口环境变量，只要保持以下映射即可：
 
-1. Open Files and select a folder.
-2. Click Play on a media item, or open the Player page directly.
-3. In Player, choose a playback folder to load that folder as the queue.
+```yaml
+ports:
+  - "8080:8080"
+volumes:
+  - ./data/config:/config
+  - ./data/downloads:/downloads
+```
 
-### Use Folder Manifests
+如需使用其他宿主机端口，只修改冒号左侧：
 
-The Files page can export a selected folder as a manifest. The default format is for aria2:
+```yaml
+ports:
+  - "8090:8080"
+```
+
+此时访问地址为 `http://服务器地址:8090`，容器内端口仍为 `8080`。
+
+### 启用访问令牌
+
+服务只在可信局域网使用时可以不设置令牌。部署到公网或共享网络时，应配置强随机令牌：
+
+```yaml
+environment:
+  TZ: Asia/Shanghai
+  YTSAGE_AUTH_TOKEN: "请替换为足够长的随机字符串"
+```
+
+重建容器后，在 Web 界面顶部或设置页输入相同令牌。API 客户端应发送：
+
+```http
+Authorization: Bearer <token>
+```
+
+> [!IMPORTANT]
+> Bearer Token 不能替代 HTTPS。通过公网访问时，请在 YTSage 前部署支持 WebSocket 的 HTTPS 反向代理。
+
+### Cookies
+
+需要登录、年龄确认或会员权限的内容通常需要 Cookies。可在 Web 界面的“设置”页面上传 Netscape 格式的 Cookies 文件，并选择：
+
+- `default`：所有未匹配专用配置的网站
+- `youtube`：YouTube
+- `bilibili`：哔哩哔哩
+
+Cookies 保存在 `/config`，请将该目录视为敏感数据，不要提交到 Git 或公开分享。
+
+## 使用流程
+
+1. 打开“下载”页面并粘贴媒体链接。
+2. 点击“分析”，等待返回媒体信息和可用格式。
+3. 选择视频、音频或字幕模式及输出选项。
+4. 如果链接是播放列表，选择需要下载的条目。
+5. 创建任务，并在“任务”页面查看实时进度。
+6. 下载完成后，在“文件”或“播放”页面管理媒体。
+
+对于需要在其他设备批量下载的目录，可在文件页面导出 aria2 清单：
 
 ```bash
 aria2c -i folder.aria2.txt
 ```
 
-The manifest contains URLs plus aria2 options such as:
+## 更新
 
-```text
-split=8
-max-connection-per-server=8
-continue=true
-```
-
-Other formats are available by changing the URL manually:
-
-```text
-/api/folders/manifest?folder=<folder>&format=txt
-/api/folders/manifest?folder=<folder>&format=json
-/api/folders/manifest?folder=<folder>&format=aria2
-```
-
-<a id="development"></a>
-## Development
-
-### Backend
-
-Use the helper script on Windows PowerShell:
-
-```powershell
-.\scripts\dev-server.ps1
-```
-
-Or start manually after creating `.env`:
+Compose 使用 `xmoli/ytsage:latest`，更新时无需修改配置文件：
 
 ```bash
+docker compose pull
+docker compose up -d
+```
+
+确认新容器健康后，可清理不再使用的旧镜像：
+
+```bash
+docker image prune
+```
+
+如果需要固定版本以避免自动切换，可以使用版本标签，例如：
+
+```yaml
+image: xmoli/ytsage:5.4.5
+```
+
+## 健康检查
+
+镜像内置 Docker 健康检查：
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' ytsage-server
+```
+
+也可以直接请求接口：
+
+```bash
+curl http://127.0.0.1:8080/api/health
+```
+
+正常响应会包含：
+
+- 配置目录和下载目录是否可写
+- yt-dlp 与 FFmpeg 版本
+- 当前任务并发数
+- 是否已配置访问令牌
+
+## 常见问题
+
+### 容器启动后显示 `unhealthy`
+
+先检查日志和健康接口：
+
+```bash
+docker compose logs --tail=100 ytsage
+curl http://127.0.0.1:8080/api/health
+```
+
+最常见原因是挂载目录不可写。确认 `data/config` 和 `data/downloads` 对 UID `10001` 可写。
+
+### `8080` 端口已被占用
+
+将宿主机端口改为其他值：
+
+```yaml
+ports:
+  - "8081:8080"
+```
+
+然后执行：
+
+```bash
+docker compose up -d --force-recreate
+```
+
+### 链接能分析标题，但没有具体格式
+
+常见原因包括登录限制、年龄或风险确认、地区限制，以及站点只在下载阶段解析格式。请尝试：
+
+1. 在设置页上传对应站点的 Cookies。
+2. 在系统页更新 yt-dlp。
+3. 使用通用的 `best` 或 `bestaudio` 格式继续下载。
+
+### 高画质视频没有声音或需要合并
+
+许多站点将高画质视频流和音频流分开提供。YTSage 使用 FFmpeg 合并它们。请在系统页或 `/api/health` 中确认 FFmpeg 可用。
+
+### 反向代理后任务进度不更新
+
+任务实时状态使用 WebSocket。请确认反向代理允许升级连接，并正确转发 `/api/events`。
+
+### 更新后仍显示旧界面
+
+确认容器使用的是新镜像，然后强制刷新浏览器缓存：
+
+```bash
+docker compose pull
+docker compose up -d --force-recreate
+docker compose images
+```
+
+## API
+
+FastAPI 自动生成交互式 API 文档：
+
+```text
+http://服务器地址:8080/docs
+```
+
+常用接口：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/health` | 服务和依赖健康状态 |
+| `GET` | `/api/settings` | 当前运行配置 |
+| `POST` | `/api/analyze` | 分析媒体链接 |
+| `POST` | `/api/tasks` | 创建下载任务 |
+| `GET` | `/api/tasks` | 获取任务列表 |
+| `POST` | `/api/tasks/{id}/cancel` | 取消任务 |
+| `GET` | `/api/history` | 获取下载历史 |
+| `GET` | `/api/files` | 获取文件列表 |
+| `GET` | `/api/files/{id}/download` | 下载文件 |
+| `GET` | `/api/files/{id}/stream` | 流式读取媒体文件 |
+| `GET` | `/api/folders/download` | 将目录下载为 ZIP |
+| `GET` | `/api/folders/manifest` | 导出目录清单 |
+| `WS` | `/api/events` | 实时任务事件 |
+
+## 非 Docker 安装
+
+需要 Python `3.11` 至 `3.14`，并建议预先安装 FFmpeg。应用自身默认使用 `/config` 和 `/downloads`，因此裸机运行前应显式指定当前用户可写的目录：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install ytsage
+
+export YTSAGE_CONFIG_DIR="$HOME/.config/ytsage"
+export YTSAGE_DOWNLOAD_DIR="$HOME/Downloads/YTSage"
+export YTSAGE_HOST=127.0.0.1
+ytsage
+```
+
+默认端口为 `8080`，按上述配置可通过以下地址访问：
+
+```text
+http://127.0.0.1:8080
+```
+
+从源码安装：
+
+```bash
+git clone https://github.com/Mr-ChenH/YTSage.git
+cd YTSage
+python -m venv .venv
+source .venv/bin/activate
+pip install .
+cp .env.example .env
+ytsage
+```
+
+`.env.example` 已将配置和下载目录设置到项目内的 `.dev-data`，并只监听 `127.0.0.1`。按需修改后再启动服务。
+
+## 本地开发
+
+后端：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install .
+cp .env.example .env
 python -m ytsage.server.app
 ```
 
-### Frontend
-
-Install frontend dependencies:
+前端：
 
 ```bash
-npm --prefix frontend install
-```
-
-Run the Vite dev server:
-
-```bash
+npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Build the production frontend:
+构建生产前端：
 
 ```bash
 npm --prefix frontend run build
-```
-
-The backend serves static files from `ytsage/server/static/`. After frontend changes, copy the build output into the server package static directory:
-
-```bash
 rm -rf ytsage/server/static/*
 cp -R frontend/dist/* ytsage/server/static/
 ```
 
-On PowerShell, use the equivalent remove/copy commands.
-
-### Validation
-
-Useful checks before committing:
+提交前至少执行：
 
 ```bash
-python -m py_compile ytsage/server/app.py ytsage/server/models.py ytsage/server/services/download_service.py
+python -m compileall -q ytsage
 npm --prefix frontend run build
+docker compose config
 ```
 
-<a id="api"></a>
-## API Overview
-
-Common endpoints:
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/health` | Server, dependency, and path health |
-| `GET` | `/api/settings` | Runtime settings visible to the UI |
-| `POST` | `/api/settings/filename-template` | Save filename template and default resolution |
-| `POST` | `/api/settings/cookies` | Save or clear cookies for a profile |
-| `POST` | `/api/dependencies/update` | Update yt-dlp and ffmpeg helper dependencies |
-| `POST` | `/api/analyze` | Analyze a media URL |
-| `POST` | `/api/tasks` | Create a download task |
-| `GET` | `/api/tasks` | List tasks |
-| `POST` | `/api/tasks/{task_id}/cancel` | Cancel a task |
-| `POST` | `/api/tasks/{task_id}/retry-playlist-item/{playlist_index}` | Retry one failed playlist item |
-| `GET` | `/api/history` | List download history |
-| `GET` | `/api/files` | List files and folders |
-| `GET` | `/api/files/{file_id}/download` | Download a file with Range support |
-| `GET` | `/api/files/{file_id}/stream` | Stream a playable file with Range support |
-| `GET` | `/api/folders/download` | Download a folder as ZIP |
-| `GET` | `/api/folders/manifest` | Export folder manifest as aria2/txt/json |
-| `WS` | `/api/events` | Realtime task events |
-
-If `YTSAGE_AUTH_TOKEN` is set, API requests require `Authorization: Bearer <token>`. WebSocket and file links can also use `?token=<token>` where needed by the browser UI.
-
-<a id="troubleshooting"></a>
-## Troubleshooting
-
-### yt-dlp Or ffmpeg Missing
-
-Open the System page and click Update Dependencies. Startup also attempts to install missing runtime dependencies unless `YTSAGE_AUTO_INSTALL_DEPS=0` is set.
-
-### Analyze Returns Metadata But No Formats
-
-This can happen for login-only media, age/risk confirmation pages, regional restrictions, or extractors that defer formats until download. Configure cookies for the target site in Settings and update yt-dlp from the System page.
-
-### High Quality Video Downloads Produce Separate Streams
-
-Many sites serve high quality video and audio separately. FFmpeg is required to merge them. Check the System page and update dependencies if ffmpeg is unavailable.
-
-### Browser Cannot See Latest UI
-
-After rebuilding frontend assets and restarting the server, force refresh the browser page. The generated asset filenames change on each build.
-
-### Ctrl+C Shutdown
-
-The packaged `ytsage` command uses a quiet Uvicorn server wrapper so Ctrl+C performs a graceful shutdown without replaying a `KeyboardInterrupt` traceback. If you run Uvicorn directly, your local Uvicorn/Python combination may still print its own shutdown stack.
-
-<a id="project-structure"></a>
-## Project Structure
+## 项目结构
 
 ```text
 YTSage/
-├── frontend/                  # React/Vite Web UI
-│   └── src/
-│       ├── api/               # API types and client
-│       ├── main.tsx           # Main single-page app
-│       └── styles.css         # UI styles
-├── scripts/
-│   └── dev-server.ps1         # Local Windows dev server helper
+├── frontend/                 # React、Vite 和 ArtPlayer 前端
+├── scripts/                  # 本地开发辅助脚本
 ├── ytsage/
-│   ├── core/                  # Legacy/core helper modules
 │   └── server/
-│       ├── app.py             # FastAPI app and routes
-│       ├── config.py          # Environment and .env config loading
-│       ├── models.py          # API models
-│       ├── static/            # Built frontend served by FastAPI
-│       └── services/          # Analyzer, downloads, files, tasks, settings
-├── .env.example               # Local server config template
-├── pyproject.toml             # Python package metadata
-└── README.md
+│       ├── app.py            # FastAPI 应用和接口
+│       ├── config.py         # 环境变量与目录配置
+│       ├── models.py         # API 数据模型
+│       ├── services/         # 分析、下载、任务、文件和存储服务
+│       └── static/           # 后端提供的前端构建产物
+├── Dockerfile               # 多阶段镜像构建
+├── docker-compose.yml       # Docker Compose 部署配置
+└── pyproject.toml           # Python 包与版本信息
 ```
 
-<a id="contributing"></a>
-## Contributing
+## 技术栈
 
-1. Fork the repository.
-2. Create a feature branch.
-3. Keep changes focused and update README/API types when behavior changes.
-4. Run backend compile checks and frontend build.
-5. Open a pull request.
+- [FastAPI](https://fastapi.tiangolo.com/) / [Uvicorn](https://www.uvicorn.org/)：Web 服务
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp)：媒体信息提取与下载
+- [FFmpeg](https://ffmpeg.org/)：音视频合并与格式处理
+- [React](https://react.dev/) / [Vite](https://vite.dev/)：Web 界面
+- [ArtPlayer](https://artplayer.org/)：浏览器媒体播放
+- SQLite：任务与历史记录持久化
 
-<a id="license"></a>
-## License
+## 贡献
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+欢迎提交 Issue 和 Pull Request。提交代码前请确保：
 
-<a id="acknowledgments"></a>
-## Acknowledgments
+- 改动范围清晰，不包含无关格式化或重构
+- 行为变化同步更新文档和前端 API 类型
+- Python 模块可以编译
+- 前端可以完成生产构建
+- Docker Compose 配置可以正常解析
 
-YTSage builds on these projects:
+## 致谢
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for extraction and downloads
-- [FFmpeg](https://ffmpeg.org/) for muxing and media conversion
-- [FastAPI](https://fastapi.tiangolo.com/) and [Uvicorn](https://www.uvicorn.org/) for the Web service
-- [React](https://react.dev/) and [Vite](https://vite.dev/) for the Web UI
-- [ArtPlayer](https://artplayer.org/) for browser playback
+感谢 [oop7/YTSage](https://github.com/oop7/YTSage) 上游项目，以及 yt-dlp、FFmpeg、FastAPI、React、Vite 和 ArtPlayer 等开源项目。
 
-## Disclaimer
+## 许可证
 
-This tool is for personal use. Respect site terms of service, copyright law, and creator rights.
+本项目采用 [MIT License](LICENSE)。
+
+## 免责声明
+
+本工具仅用于合法的个人下载和媒体管理。使用者应自行确认对目标内容拥有下载、保存和使用权限，并遵守相关网站服务条款、所在地法律法规、版权及创作者权益。项目维护者不对滥用行为承担责任。

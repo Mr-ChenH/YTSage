@@ -39,3 +39,4 @@ venv/
 *.tmp
 .tmp*/
 .dev-data/
+data/
