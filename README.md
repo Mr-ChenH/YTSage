@@ -101,11 +101,9 @@ services:
       - ./data/downloads:/downloads
 ```
 
-创建持久化目录并启动：
+启动服务：
 
 ```bash
-mkdir -p data/config data/downloads
-sudo chown -R 10001:10001 data/config data/downloads
 docker compose up -d
 ```
 
@@ -125,9 +123,6 @@ docker compose logs -f
 ### Docker CLI
 
 ```bash
-mkdir -p data/config data/downloads
-sudo chown -R 10001:10001 data/config data/downloads
-
 docker run -d \
   --name ytsage-server \
   --restart unless-stopped \
@@ -143,8 +138,6 @@ docker run -d \
 ```bash
 git clone https://github.com/Mr-ChenH/YTSage.git
 cd YTSage
-mkdir -p data/config data/downloads
-sudo chown -R 10001:10001 data/config data/downloads
 docker compose up -d --build
 ```
 
@@ -159,20 +152,14 @@ docker compose up -d --build
 
 删除或重新创建容器不会删除宿主机上的这两个目录。升级前建议备份 `data/config`。
 
-Docker 镜像默认以非 root 用户运行：
+容器启动时，入口脚本会自动创建挂载目录并将其调整为应用用户可写。入口脚本完成初始化后，会立即降权运行 YTSage；应用进程不会以 root 身份常驻：
 
 ```text
 UID=10001
 GID=10001
 ```
 
-如果健康检查显示目录不可写，执行：
-
-```bash
-sudo chown -R 10001:10001 data/config data/downloads
-```
-
-如果主机环境无法修改目录所有者，也可以根据实际安全要求授予目录写权限，但不建议长期使用过宽的权限。
+因此使用默认 Docker 或 Compose 配置时，不需要手动执行 `mkdir`、`chown` 或 `chmod`。如果通过 `user:` 或 `docker run --user` 强制覆盖容器用户，自动权限初始化将无法执行，此时需要自行保证挂载目录可写。
 
 ## 配置
 
@@ -305,7 +292,7 @@ docker compose logs --tail=100 ytsage
 curl http://127.0.0.1:8080/api/health
 ```
 
-最常见原因是挂载目录不可写。确认 `data/config` 和 `data/downloads` 对 UID `10001` 可写。
+最常见原因是挂载目录所在文件系统不允许容器修改所有者，例如某些只读挂载或受限网络文件系统。默认本地 bind mount 会由容器入口脚本自动初始化权限；如果配置了 `user:`、`--user` 或只读挂载，则需要自行确保 `/config` 和 `/downloads` 对指定用户可写。
 
 ### `8080` 端口已被占用
 

@@ -15,19 +15,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YTSAGE_QUEUE_CONCURRENCY=2
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl \
+    && apt-get install -y --no-install-recommends ffmpeg curl gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY ytsage ./ytsage
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=ui /app/frontend/dist ./ytsage/server/static
 RUN pip install --no-cache-dir .
 
 RUN useradd --create-home --uid 10001 ytsage \
     && mkdir -p /config /downloads \
-    && chown -R ytsage:ytsage /config /downloads /app
-USER ytsage
+    && chown -R ytsage:ytsage /config /downloads /app \
+    && chmod 0755 /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 8080
 VOLUME ["/config", "/downloads"]
