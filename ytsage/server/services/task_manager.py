@@ -38,8 +38,10 @@ class TaskManager:
     async def start(self) -> None:
         if self._started:
             return
-        self.storage.mark_interrupted_tasks()
+        recovered_tasks = self.storage.recover_interrupted_tasks()
         self._started = True
+        for task in recovered_tasks:
+            await self.queue.put(task.id)
         for index in range(self.config.queue_concurrency):
             self._workers.append(asyncio.create_task(self._worker(index)))
 
@@ -181,8 +183,16 @@ class TaskManager:
     ) -> tuple[list[str], int, str | None, TaskProgress]:
         all_output: list[str] = []
         last_output_path: str | None = None
+        progress = self._copy_progress(progress)
+        completed_indexes = set(progress.playlist_completed_indexes)
+        if not completed_indexes and progress.playlist_last_index:
+            completed_indexes.update(
+                entry.index for entry in entries if entry.index < progress.playlist_last_index
+            )
+            progress.playlist_completed_indexes = sorted(completed_indexes)
+        pending_entries = [entry for entry in entries if entry.index not in completed_indexes]
 
-        for position, entry in enumerate(entries, start=1):
+        for entry in pending_entries:
             if self.storage.get_task(task.id).status == "cancelled":
                 break
             item_request = request.model_copy(deep=True)
@@ -198,13 +208,14 @@ class TaskManager:
             progress.playlist_last_index = entry.index
             progress.playlist_total = len(entries)
             progress.percent = None
-            progress.status_text = f"Downloading playlist item {position} of {len(entries)}"
+            completed_count = len(progress.playlist_completed_indexes)
+            progress.status_text = f"Downloading playlist item {completed_count + 1} of {len(entries)}"
 
             output, return_code, output_path, progress = await self._execute_with_youtube_fallback(
                 task,
                 item_request,
                 progress,
-                fallback_status=f"Downloaded playlist item {position} at 360p after YouTube rejected the selected format",
+                fallback_status=f"Downloaded playlist item {completed_count + 1} at 360p after YouTube rejected the selected format",
             )
             item_error = next((line for line in reversed(output) if "ERROR:" in line), None)
             all_output.extend(output)
@@ -225,13 +236,13 @@ class TaskManager:
                 if entry.index not in completed_indexes:
                     completed_indexes.append(entry.index)
                 if not progress.status_text or progress.status_text.startswith("ERROR:"):
-                    progress.status_text = f"Downloaded playlist item {position} of {len(entries)}"
+                    progress.status_text = f"Downloaded playlist item {len(completed_indexes)} of {len(entries)}"
             progress.playlist_failed_indexes = failed_indexes
             progress.playlist_completed_indexes = sorted(completed_indexes)
             progress.playlist_failures = failures
             progress.playlist_current_index = None
             progress.playlist_last_index = entry.index
-            progress.percent = position / len(entries) * 100
+            progress.percent = len(completed_indexes) / len(entries) * 100
             updated = self.storage.update_task(task.id, progress=progress)
             await self._publish("task_progress", updated)
 

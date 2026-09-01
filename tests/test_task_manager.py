@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from ytsage.server.models import CreateTaskRequest, PlaylistEntry, TaskProgress, TaskResponse
+from ytsage.server.services.storage import Storage
 from ytsage.server.services.task_manager import TaskManager
 
 
@@ -24,6 +25,96 @@ def _task(entries: list[PlaylistEntry]) -> TaskResponse:
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
     )
+
+
+@pytest.mark.anyio
+async def test_start_requeues_tasks_left_active_by_previous_process(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "tasks.db")
+    task = storage.create_task("restart-task", CreateTaskRequest(url="https://example.com/video"))
+    storage.update_task(task.id, status="running", error="old transient error", finished_at="2026-01-01T00:00:00+00:00")
+    manager = TaskManager(Mock(queue_concurrency=0), storage)
+
+    await manager.start()
+
+    recovered = storage.get_task(task.id)
+    assert recovered.status == "queued"
+    assert recovered.error is None
+    assert recovered.finished_at is None
+    assert await manager.queue.get() == task.id
+    manager.queue.task_done()
+    await manager.stop()
+
+
+@pytest.mark.anyio
+async def test_recovered_playlist_skips_completed_items_and_continues_pending() -> None:
+    entries = [
+        PlaylistEntry(index=index, url=f"https://www.youtube.com/watch?v=video-{index}")
+        for index in range(1, 5)
+    ]
+    progress = TaskProgress(
+        playlist_current_index=3,
+        playlist_last_index=3,
+        playlist_total=4,
+        playlist_completed_indexes=[1, 2],
+    )
+    task = _task(entries).model_copy(update={"status": "queued", "progress": progress})
+    stored_task = task
+    manager = TaskManager(Mock(), Mock())
+
+    def update_task(_task_id: str, **fields: object) -> TaskResponse:
+        nonlocal stored_task
+        stored_task = stored_task.model_copy(update=fields)
+        return stored_task
+
+    manager.storage.get_task.side_effect = lambda _task_id: stored_task
+    manager.storage.update_task.side_effect = update_task
+    manager._publish = AsyncMock()
+    downloaded_urls: list[str] = []
+
+    async def execute(_task: TaskResponse, request: CreateTaskRequest, item_progress: TaskProgress, **_kwargs: object):
+        downloaded_urls.append(request.url)
+        return [], 0, f"/downloads/video-{len(downloaded_urls) + 2}.mp4", item_progress
+
+    manager._execute_download = AsyncMock(side_effect=execute)
+
+    _, return_code, _, resumed_progress = await manager._execute_playlist_entries(
+        task, CreateTaskRequest(**task.options), entries, progress
+    )
+
+    assert return_code == 0
+    assert downloaded_urls == [entries[2].url, entries[3].url]
+    assert resumed_progress.playlist_completed_indexes == [1, 2, 3, 4]
+    assert resumed_progress.percent == 100.0
+
+
+@pytest.mark.anyio
+async def test_recovered_legacy_playlist_resumes_from_interrupted_item() -> None:
+    entries = [
+        PlaylistEntry(index=index, url=f"https://www.youtube.com/watch?v=video-{index}")
+        for index in range(1, 5)
+    ]
+    progress = TaskProgress(playlist_current_index=3, playlist_last_index=3, playlist_total=4)
+    task = _task(entries).model_copy(update={"status": "queued", "progress": progress})
+    stored_task = task
+    manager = TaskManager(Mock(), Mock())
+
+    def update_task(_task_id: str, **fields: object) -> TaskResponse:
+        nonlocal stored_task
+        stored_task = stored_task.model_copy(update=fields)
+        return stored_task
+
+    manager.storage.get_task.side_effect = lambda _task_id: stored_task
+    manager.storage.update_task.side_effect = update_task
+    manager._publish = AsyncMock()
+    manager._execute_download = AsyncMock(
+        side_effect=lambda _task, request, item_progress, **_kwargs: ([], 0, request.url, item_progress)
+    )
+
+    await manager._execute_playlist_entries(task, CreateTaskRequest(**task.options), entries, progress)
+
+    downloaded_urls = [call.args[1].url for call in manager._execute_download.await_args_list]
+    assert downloaded_urls == [entries[2].url, entries[3].url]
+    assert stored_task.progress.playlist_completed_indexes == [1, 2, 3, 4]
 
 
 @pytest.mark.anyio

@@ -142,6 +142,31 @@ class Storage:
             cursor = self._conn.execute("DELETE FROM tasks WHERE status NOT IN ('queued', 'running')")
         return int(cursor.rowcount)
 
+    def recover_interrupted_tasks(self) -> list[TaskResponse]:
+        """Requeue work left active by the previous server process."""
+        now = utc_now()
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks WHERE status IN ('queued', 'running') ORDER BY created_at"
+            ).fetchall()
+            if not rows:
+                return []
+            task_ids = [row["id"] for row in rows]
+            placeholders = ", ".join("?" for _ in task_ids)
+            self._conn.execute(
+                f"""
+                UPDATE tasks
+                SET status = 'queued', updated_at = ?, finished_at = NULL, error = NULL
+                WHERE id IN ({placeholders})
+                """,
+                [now, *task_ids],
+            )
+            recovered_rows = self._conn.execute(
+                f"SELECT * FROM tasks WHERE id IN ({placeholders}) ORDER BY created_at",
+                task_ids,
+            ).fetchall()
+        return [self._task_from_row(row) for row in recovered_rows]
+
     def mark_interrupted_tasks(self) -> None:
         now = utc_now()
         with self._lock, self._conn:
