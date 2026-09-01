@@ -277,6 +277,52 @@ docker image prune
 image: xmoli/ytsage:5.4.6
 ```
 
+### 自动构建并发布镜像
+
+维护者可以使用仓库内的发布脚本拉取最新代码、构建镜像并推送 Docker Hub。首次使用前先登录镜像仓库：
+
+```bash
+docker login
+```
+
+确保工作区没有未提交修改，并在 `pyproject.toml` 中设置好待发布版本，然后执行：
+
+```bash
+./scripts/publish-docker.sh
+```
+
+脚本会依次执行：
+
+1. 使用 `git pull --ff-only` 拉取当前分支的最新代码。
+2. 从 `pyproject.toml` 读取项目版本。
+3. 拉取最新基础镜像并构建 YTSage。
+4. 生成 `xmoli/ytsage:<版本>` 和 `xmoli/ytsage:latest` 两个标签。
+5. 将两个标签推送到 Docker Hub。
+
+正式执行前可以预览命令：
+
+```bash
+./scripts/publish-docker.sh --dry-run
+```
+
+发布到其他镜像仓库：
+
+```bash
+./scripts/publish-docker.sh --image registry.example.com/team/ytsage
+```
+
+在 CI 已经检出目标提交、不需要再次拉取代码时：
+
+```bash
+./scripts/publish-docker.sh --no-pull
+```
+
+查看所有参数：
+
+```bash
+./scripts/publish-docker.sh --help
+```
+
 ## 健康检查
 
 镜像内置 Docker 健康检查：
