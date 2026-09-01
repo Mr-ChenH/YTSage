@@ -204,6 +204,19 @@ def test_non_youtube_download_does_not_enable_youtube_workarounds() -> None:
     assert "--http-chunk-size" not in command
 
 
+def test_auto_best_video_explicitly_selects_best_video_and_audio() -> None:
+    request = CreateTaskRequest(url="https://example.com/video", mode="video", format_id=None)
+
+    with (
+        patch("ytsage.server.services.download_service.ytdlp_base_command", return_value=["yt-dlp"]),
+        patch("ytsage.server.services.download_service.ffmpeg_location_arg", return_value=None),
+    ):
+        command = build_download_command(request, Path("/downloads"))
+
+    assert command[command.index("-f") + 1] == "bestvideo*+bestaudio/best"
+
+
+
 def test_single_video_format_adds_audio_and_fallbacks() -> None:
     request = CreateTaskRequest(url="https://example.com/video", format_id="137")
 

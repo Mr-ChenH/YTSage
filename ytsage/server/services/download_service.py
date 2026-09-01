@@ -75,6 +75,8 @@ def build_download_command(
             cmd.extend(["-f", request.format_id])
     elif request.mode == "audio":
         cmd.extend(["-f", "bestaudio/best"])
+    elif request.mode == "video":
+        cmd.extend(["-f", "bestvideo*+bestaudio/best"])
 
     if request.mode == "audio":
         cmd.extend(["-x", "--audio-format", request.audio_format])

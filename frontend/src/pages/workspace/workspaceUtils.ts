@@ -48,15 +48,13 @@ export function preferredFormatForMode(formats: FormatInfo[], mode: DownloadMode
   if (mode === 'subtitles') return null;
   const candidates = modeFormats(formats, mode);
   if (mode === 'audio') return candidates.find((format) => format.format_id === 'bestaudio')?.format_id || candidates[0]?.format_id || null;
-  if (defaultResolution !== 'best') {
-    const resolutionNumber = Number(defaultResolution.replace(/p$/i, ''));
-    const matched = candidates.find((format) => {
-      const text = [format.resolution, format.format_id].filter(Boolean).join(' ');
-      return text.includes(defaultResolution) || text.includes(String(resolutionNumber));
-    });
-    if (matched) return matched.format_id;
-  }
-  return candidates.find((format) => format.format_id === 'best')?.format_id || candidates[0]?.format_id || null;
+  if (defaultResolution === 'best') return null;
+  const resolutionNumber = Number(defaultResolution.replace(/p$/i, ''));
+  const matched = candidates.find((format) => {
+    const text = [format.resolution, format.format_id].filter(Boolean).join(' ');
+    return text.includes(defaultResolution) || text.includes(String(resolutionNumber));
+  });
+  return matched?.format_id || null;
 }
 
 export function formatLabel(format: FormatInfo): string {
