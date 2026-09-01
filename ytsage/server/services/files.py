@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import shutil
 import urllib.parse
 import zipfile
 from datetime import datetime, timezone
@@ -100,7 +101,16 @@ def _file_entry(root: Path, request: Request, path: Path, stat) -> FileEntry:
     )
 
 
-def list_files(root: Path, request: Request, query: str | None = None, folder: str | None = None, offset: int = 0, limit: int = 50) -> FileListResponse:
+def list_files(
+    root: Path,
+    request: Request,
+    query: str | None = None,
+    folder: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+    media_only: bool = False,
+    direct_only: bool = False,
+) -> FileListResponse:
     root = root.resolve()
     matched: list[tuple[Path, object]] = []
     folders: set[str] = set()
@@ -115,7 +125,14 @@ def list_files(root: Path, request: Request, query: str | None = None, folder: s
             parent = ""
         if parent:
             folders.add(parent)
-        if folder_filter and parent != folder_filter and not parent.startswith(f"{folder_filter}/"):
+        if folder_filter:
+            if direct_only and parent != folder_filter:
+                continue
+            if not direct_only and parent != folder_filter and not parent.startswith(f"{folder_filter}/"):
+                continue
+        elif direct_only and parent:
+            continue
+        if media_only and path.suffix.lower() not in PLAYABLE_EXTENSIONS:
             continue
         if query_lower and query_lower not in path.name.lower():
             continue
@@ -138,6 +155,39 @@ def list_files(root: Path, request: Request, query: str | None = None, folder: s
         query=query,
         folder=folder_filter,
     )
+
+
+def delete_download_file(root: Path, file_id: str) -> None:
+    path = resolve_download_file(root, file_id)
+    path.unlink()
+    _remove_empty_parents(path.parent, root.resolve())
+
+
+def delete_download_folder(root: Path, folder: str) -> None:
+    root = root.resolve()
+    folder_filter = _safe_folder_filter(folder)
+    if not folder_filter:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Downloads root cannot be deleted")
+    candidate = (root / folder_filter).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Folder is outside downloads root") from exc
+    if candidate == root:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Downloads root cannot be deleted")
+    if not candidate.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder not found")
+    shutil.rmtree(candidate)
+    _remove_empty_parents(candidate.parent, root)
+
+
+def _remove_empty_parents(path: Path, root: Path) -> None:
+    while path != root:
+        try:
+            path.rmdir()
+        except OSError:
+            break
+        path = path.parent
 
 
 def ranged_download_response(path: Path, range_header: str | None) -> StreamingResponse:

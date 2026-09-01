@@ -24,6 +24,8 @@ export interface ApiClientOptions {
   token: string;
 }
 
+const pendingFileRequests = new Map<string, Promise<FileListResponse>>();
+
 function headers(token: string, json = false): HeadersInit {
   const result: Record<string, string> = {};
   if (json) result['Content-Type'] = 'application/json';
@@ -34,12 +36,15 @@ function headers(token: string, json = false): HeadersInit {
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = await response.json();
-      if (body.detail) message = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
-    } catch {
-      const text = await response.text();
-      if (text) message = text;
+    const text = await response.text();
+    if (text) {
+      try {
+        const body = JSON.parse(text) as { detail?: unknown };
+        if (body.detail) message = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+        else message = text;
+      } catch {
+        message = text;
+      }
     }
     throw new ApiError(response.status, message);
   }
@@ -69,7 +74,11 @@ export function createApiClient({ token }: ApiClientOptions) {
         headers: headers(token, true),
         body: JSON.stringify({ url, generic_mode: genericMode }),
       }).then(parseResponse<AnalyzeResponse>),
-    tasks: () => fetch('/api/tasks', { headers: headers(token) }).then(parseResponse<TaskResponse[]>),
+    tasks: (offset = 0, limit = 100, activeOnly = false) => {
+      const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      if (activeOnly) params.set('active_only', 'true');
+      return fetch(`/api/tasks?${params.toString()}`, { headers: headers(token) }).then(parseResponse<TaskResponse[]>);
+    },
     createTask: (request: CreateTaskRequest) =>
       fetch('/api/tasks', {
         method: 'POST',
@@ -86,20 +95,48 @@ export function createApiClient({ token }: ApiClientOptions) {
     clearTasks: () => fetch('/api/tasks', { method: 'DELETE', headers: headers(token) }).then((response) => {
       if (!response.ok) return parseResponse<never>(response);
     }),
-    history: () => fetch('/api/history', { headers: headers(token) }).then(parseResponse<HistoryEntry[]>),
+    history: (offset = 0, limit = 50) => {
+      const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      return fetch(`/api/history?${params.toString()}`, { headers: headers(token) }).then(parseResponse<HistoryEntry[]>);
+    },
     deleteHistory: (historyId: string) => fetch(`/api/history/${historyId}`, { method: 'DELETE', headers: headers(token) }).then((response) => {
       if (!response.ok) return parseResponse<never>(response);
     }),
     clearHistory: () => fetch('/api/history', { method: 'DELETE', headers: headers(token) }).then((response) => {
       if (!response.ok) return parseResponse<never>(response);
     }),
-    files: (query = '', folder = '', offset = 0, limit = 50) => {
+    files: (query = '', folder = '', offset = 0, limit = 50, mediaOnly = false, directOnly = false) => {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       if (folder) params.set('folder', folder);
       params.set('offset', String(offset));
       params.set('limit', String(limit));
-      return fetch(`/api/files?${params.toString()}`, { headers: headers(token) }).then(parseResponse<FileListResponse>);
+      if (mediaOnly) params.set('media_only', 'true');
+      if (directOnly) params.set('direct_only', 'true');
+      const url = `/api/files?${params.toString()}`;
+      const requestKey = `${token}\n${url}`;
+      const pending = pendingFileRequests.get(requestKey);
+      if (pending) return pending;
+      const request = fetch(url, { headers: headers(token) })
+        .then(parseResponse<FileListResponse>)
+        .finally(() => pendingFileRequests.delete(requestKey));
+      pendingFileRequests.set(requestKey, request);
+      return request;
+    },
+    deleteFile: (fileId: string) => fetch(`/api/files/${encodeURIComponent(fileId)}`, {
+      method: 'DELETE',
+      headers: headers(token),
+    }).then((response) => {
+      if (!response.ok) return parseResponse<never>(response);
+    }),
+    deleteFolder: (folder: string) => {
+      const params = new URLSearchParams({ folder });
+      return fetch(`/api/folders?${params.toString()}`, {
+        method: 'DELETE',
+        headers: headers(token),
+      }).then((response) => {
+        if (!response.ok) return parseResponse<never>(response);
+      });
     },
     downloadFolderUrl: (folder: string) => {
       const params = new URLSearchParams();

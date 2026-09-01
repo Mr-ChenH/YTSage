@@ -117,6 +117,14 @@ def ytdlp_command() -> list[str]:
     return info.command.copy()
 
 
+def ytdlp_base_command() -> list[str]:
+    command = ytdlp_command()
+    deno = shutil.which("deno")
+    if deno:
+        command.extend(["--js-runtimes", f"deno:{deno}"])
+    return command
+
+
 def ytdlp_version() -> str:
     info = get_ytdlp_info() or ensure_ytdlp()
     return info.version if info is not None else "not found"

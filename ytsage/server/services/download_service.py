@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 from ..models import CreateTaskRequest, TaskProgress
-from .dependencies import ffmpeg_location_arg, ytdlp_command
+from .dependencies import ffmpeg_location_arg, ytdlp_base_command
 
-_PROGRESS_RE = re.compile(
-    r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%.*?(?:at\s+(?P<speed>\S+))?.*?(?:ETA\s+(?P<eta>\S+))?"
-)
+_PROGRESS_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
+_SPEED_RE = re.compile(r"\bat\s+(?P<speed>\S+/s)\b")
+_ETA_RE = re.compile(r"\bETA\s+(?P<eta>\S+)")
 _DEST_RE = re.compile(r"\[download\]\s+Destination:\s+(?P<path>.+)")
 _MERGE_RE = re.compile(r"\[Merger\]\s+Merging formats into\s+\"(?P<path>.+)\"")
 _PLAYLIST_ITEM_RE = re.compile(r"\[download\]\s+Downloading item\s+(?P<index>\d+)\s+of\s+(?P<total>\d+)")
@@ -19,16 +20,57 @@ _PLAYLIST_FINISHED_RE = re.compile(r"\[download\]\s+Finished downloading playlis
 _ERROR_RE = re.compile(r"ERROR:\s+(?P<message>.+)")
 
 
+def _is_youtube_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host.endswith("youtube.com") or host.endswith("youtu.be")
 
-def build_download_command(request: CreateTaskRequest, download_dir: Path) -> list[str]:
-    cmd = [*ytdlp_command(), request.url, "--newline", "--progress", "--encoding", "utf-8", "-P", str(download_dir), "-o", request.filename_template]
+
+
+def _single_item_filename_template(request: CreateTaskRequest) -> str:
+    template = request.filename_template
+    is_playlist = bool(request.playlist_entries or request.playlist_items)
+    if is_playlist or "%(playlist_" in template:
+        return template
+    normalized = template.replace("\\", "/").lstrip("./")
+    if normalized.startswith("%(title)s/"):
+        return template
+    return f"%(title)s/{template}"
+
+
+def build_download_command(
+    request: CreateTaskRequest,
+    download_dir: Path,
+    *,
+    single_item_directory: bool | None = None,
+) -> list[str]:
+    if single_item_directory is None:
+        single_item_directory = not bool(request.playlist_entries or request.playlist_items or "%(playlist_" in request.filename_template)
+    output_template = _single_item_filename_template(request) if single_item_directory else request.filename_template
+    cmd = [*ytdlp_base_command(), request.url, "--newline", "--progress", "--encoding", "utf-8", "-P", str(download_dir), "-o", output_template]
     ffmpeg_location = ffmpeg_location_arg()
     if ffmpeg_location:
         cmd.extend(["--ffmpeg-location", ffmpeg_location])
+    if _is_youtube_url(request.url):
+        cmd.extend(
+            [
+                "--remote-components",
+                "ejs:github",
+                "--http-chunk-size",
+                "2M",
+                "--socket-timeout",
+                "45",
+                "--retries",
+                "5",
+                "--retry-sleep",
+                "http:exp=1:8",
+            ]
+        )
+        if request.format_id == "18":
+            cmd.extend(["--extractor-args", "youtube:player_client=android"])
 
     if request.format_id:
-        if request.playlist_items:
-            cmd.extend(["-f", f"{request.format_id}/bestvideo*+bestaudio/best"])
+        if request.mode == "video" and request.format_id != "18":
+            cmd.extend(["-f", f"{request.format_id}+bestaudio/{request.format_id}/bestvideo*+bestaudio/best"])
         else:
             cmd.extend(["-f", request.format_id])
     elif request.mode == "audio":
@@ -106,10 +148,12 @@ def parse_progress_line(line: str, current: TaskProgress | None = None) -> TaskP
     match = _PROGRESS_RE.search(line)
     if match:
         progress.percent = float(match.group("percent"))
-        if match.group("speed"):
-            progress.speed = match.group("speed")
-        if match.group("eta"):
-            progress.eta = match.group("eta")
+        speed = _SPEED_RE.search(line)
+        eta = _ETA_RE.search(line)
+        if speed:
+            progress.speed = speed.group("speed")
+        if eta:
+            progress.eta = eta.group("eta")
         progress.status_text = line.strip()
         return progress
 

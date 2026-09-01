@@ -1,8 +1,26 @@
 services:
+  init-permissions:
+    image: xmoli/ytsage:latest
+    build: .
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /config /downloads &&
+        chown -R 10001:10001 /config /downloads &&
+        chmod -R u+rwX /config /downloads
+    volumes:
+      - ./data/config:/config
+      - ./data/downloads:/downloads
+    restart: "no"
+
   ytsage:
     image: xmoli/ytsage:latest
     build: .
     container_name: ytsage-server
+    depends_on:
+      init-permissions:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     environment:

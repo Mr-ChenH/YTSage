@@ -78,7 +78,7 @@ YTSage 将 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 和 [FFmpeg](https://ffmpe
 
 ## 快速开始
 
-推荐使用 Docker Compose 部署。镜像已经包含前端、后端、yt-dlp 和 FFmpeg，不需要额外安装运行环境。
+推荐使用 Docker Compose 部署。镜像已经包含前端、后端、yt-dlp、Deno 和 FFmpeg，不需要额外安装运行环境。
 
 ### Docker Compose
 
@@ -86,10 +86,27 @@ YTSage 将 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 和 [FFmpeg](https://ffmpe
 
 ```yaml
 services:
+  init-permissions:
+    image: xmoli/ytsage:latest
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /config /downloads &&
+        chown -R 10001:10001 /config /downloads &&
+        chmod -R u+rwX /config /downloads
+    volumes:
+      - ./data/config:/config
+      - ./data/downloads:/downloads
+    restart: "no"
+
   ytsage:
     image: xmoli/ytsage:latest
     container_name: ytsage-server
     restart: unless-stopped
+    depends_on:
+      init-permissions:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     environment:
@@ -152,6 +169,8 @@ docker compose up -d --build
 
 删除或重新创建容器不会删除宿主机上的这两个目录。升级前建议备份 `data/config`。
 
+Compose 中的 `init-permissions` 服务会在应用启动前自动创建目录，并将其设置为应用用户可写，因此首次部署不需要手动执行 `chown` 或 `chmod`。该初始化容器完成后会退出，YTSage 主进程仍以非 root 用户运行。
+
 容器启动时，入口脚本会自动创建挂载目录并将其调整为应用用户可写。入口脚本完成初始化后，会立即降权运行 YTSage；应用进程不会以 root 身份常驻：
 
 ```text
@@ -159,7 +178,7 @@ UID=10001
 GID=10001
 ```
 
-因此使用默认 Docker 或 Compose 配置时，不需要手动执行 `mkdir`、`chown` 或 `chmod`。如果通过 `user:` 或 `docker run --user` 强制覆盖容器用户，自动权限初始化将无法执行，此时需要自行保证挂载目录可写。
+使用仓库提供的 Compose 配置时，不需要手动执行 `mkdir`、`chown` 或 `chmod`。如果不使用初始化服务，或者通过 `user:`、`docker run --user` 强制覆盖容器用户，则需要自行保证 bind mount 对指定用户可写。某些 NFS、SMB 或只读文件系统禁止容器执行 `chown`，这种情况下仍需在存储端配置权限。
 
 ## 配置
 
@@ -176,11 +195,9 @@ GID=10001
 | `YTSAGE_AUTO_INSTALL_DEPS` | `1` | 是否在启动时尝试补充缺失的运行依赖 |
 | `TZ` | `UTC` | 容器时区，使用 IANA 时区名称 |
 
-通常无需设置目录和端口环境变量，只要保持以下映射即可：
+通常无需设置目录和端口环境变量，只要保持以下 bind mount 映射即可：
 
 ```yaml
-ports:
-  - "8080:8080"
 volumes:
   - ./data/config:/config
   - ./data/downloads:/downloads
@@ -321,6 +338,17 @@ docker compose up -d --force-recreate
 
 许多站点将高画质视频流和音频流分开提供。YTSage 使用 FFmpeg 合并它们。请在系统页或 `/api/health` 中确认 FFmpeg 可用。
 
+### YouTube 提示缺少 JavaScript runtime 或返回 `HTTP Error 403`
+
+当前 Docker 镜像已安装 Deno，并自动通过 `--js-runtimes` 提供给 yt-dlp。更新代码后需要重新构建镜像，不能只重启旧容器：
+
+```bash
+docker compose build --pull --no-cache
+docker compose up -d --force-recreate
+```
+
+若更新后仍返回 403，请先在系统页更新 yt-dlp，并为 YouTube 配置有效 Cookies。
+
 ### 反向代理后任务进度不更新
 
 任务实时状态使用 WebSocket。请确认反向代理允许升级连接，并正确转发 `/api/events`。
@@ -398,7 +426,16 @@ ytsage
 
 ## 本地开发
 
-后端：
+使用 [mise](https://mise.jdx.dev/) 可一次安装前后端运行时并启动开发环境：
+
+```bash
+mise install
+mise run dev
+```
+
+后端监听 `http://127.0.0.1:8080`，前端使用 Vite 默认开发端口。也可分别执行 `mise run backend:dev`、`mise run frontend:dev`，提交前执行 `mise run test`。
+
+不使用 mise 时，后端：
 
 ```bash
 python -m venv .venv

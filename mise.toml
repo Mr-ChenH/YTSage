@@ -1,0 +1,54 @@
+[tools]
+python = "3.12"
+node = "22"
+deno = "2"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+YTSAGE_HOST = "127.0.0.1"
+YTSAGE_PORT = "8080"
+YTSAGE_CONFIG_DIR = "{{config_root}}/.dev-data/config"
+YTSAGE_DOWNLOAD_DIR = "{{config_root}}/.dev-data/downloads"
+
+[tasks."backend:install"]
+description = "Install the Python backend and development tools"
+sources = ["pyproject.toml"]
+outputs = [".venv/.ytsage-installed"]
+run = [
+  "python -m pip install -e . pytest",
+  "python -c \"from pathlib import Path; Path('.venv/.ytsage-installed').touch()\"",
+]
+
+[tasks."backend:dev"]
+description = "Run the backend development server"
+depends = ["backend:install"]
+run = "python -m ytsage.server.app"
+
+[tasks."backend:test"]
+description = "Run backend tests"
+depends = ["backend:install"]
+run = "python -m pytest"
+
+[tasks."frontend:install"]
+description = "Install frontend dependencies from the lockfile"
+sources = ["frontend/package.json", "frontend/package-lock.json"]
+outputs = ["frontend/node_modules/.package-lock.json"]
+run = "npm --prefix frontend ci"
+
+[tasks."frontend:dev"]
+description = "Run the Vite frontend development server"
+depends = ["frontend:install"]
+run = "npm --prefix frontend run dev"
+
+[tasks."frontend:build"]
+description = "Build the production frontend"
+depends = ["frontend:install"]
+run = "npm --prefix frontend run build"
+
+[tasks.dev]
+description = "Run backend and frontend development servers"
+depends = ["backend:dev", "frontend:dev"]
+
+[tasks.test]
+description = "Run backend tests and build the frontend"
+depends = ["backend:test", "frontend:build"]

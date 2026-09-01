@@ -93,6 +93,7 @@ class TaskProgress(BaseModel):
     playlist_last_index: int | None = None
     playlist_total: int | None = None
     playlist_failed_indexes: list[int] = Field(default_factory=list)
+    playlist_completed_indexes: list[int] = Field(default_factory=list)
     playlist_failures: dict[str, str] = Field(default_factory=dict)
 
 

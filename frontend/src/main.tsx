@@ -1,5 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Artplayer from 'artplayer';
+import {
+  Activity,
+  ChevronRight,
+  CircleUserRound,
+  Copy,
+  Download,
+  FolderOpen,
+  History as HistoryIcon,
+  Languages,
+  MonitorPlay,
+  Music2,
+  Play,
+  RefreshCw,
+  Settings2,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import { ApiError, createApiClient } from './api/client';
 import type {
@@ -32,13 +48,13 @@ type TKey = keyof typeof messages.zh;
 type T = (key: TKey) => string;
 
 const navItems = [
-  ['workspace', 'D', 'navWorkspace'],
-  ['tasks', 'Q', 'navTasks'],
-  ['history', 'H', 'navHistory'],
-  ['files', 'F', 'navFiles'],
-  ['player', 'P', 'navPlayer'],
-  ['settings', 'S', 'navSettings'],
-  ['system', 'I', 'navSystem'],
+  ['workspace', Download, 'navWorkspace'],
+  ['tasks', Activity, 'navTasks'],
+  ['history', HistoryIcon, 'navHistory'],
+  ['files', FolderOpen, 'navFiles'],
+  ['player', MonitorPlay, 'navPlayer'],
+  ['settings', SlidersHorizontal, 'navSettings'],
+  ['system', Settings2, 'navSystem'],
 ] as const;
 
 type Page = (typeof navItems)[number][0];
@@ -145,25 +161,59 @@ function App() {
   const t = useCallback<T>((key) => messages[locale][key], [locale]);
   const api = useMemo(() => createApiClient({ token }), [token]);
 
-  const loadCore = useCallback(async () => {
+  const handleLoadError = useCallback((err: unknown) => {
+    if (err instanceof ApiError && err.status === 401) setAuthRequired(true);
+    setError(err instanceof Error ? err.message : String(err));
+  }, []);
+
+  const loadStatus = useCallback(async () => {
     setError(null);
     try {
-      const [healthData, settingsData, taskData, historyData] = await Promise.all([
-        api.health(),
-        api.settings(),
-        api.tasks(),
-        api.history(),
-      ]);
+      const healthData = await api.health();
       setHealth(healthData);
-      setSettings(settingsData);
-      setTasks(taskData);
-      setHistory(historyData);
       setAuthRequired(false);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) setAuthRequired(true);
-      setError(err instanceof Error ? err.message : String(err));
+      handleLoadError(err);
     }
-  }, [api]);
+  }, [api, handleLoadError]);
+
+  const loadSettings = useCallback(async () => {
+    setError(null);
+    try {
+      setSettings(await api.settings());
+      setAuthRequired(false);
+    } catch (err) {
+      handleLoadError(err);
+    }
+  }, [api, handleLoadError]);
+
+  const loadTasks = useCallback(async () => {
+    setError(null);
+    try {
+      setTasks(await api.tasks(0, 100));
+      setAuthRequired(false);
+    } catch (err) {
+      handleLoadError(err);
+    }
+  }, [api, handleLoadError]);
+
+  const loadHistory = useCallback(async () => {
+    setError(null);
+    try {
+      setHistory(await api.history(0, 50));
+      setAuthRequired(false);
+    } catch (err) {
+      handleLoadError(err);
+    }
+  }, [api, handleLoadError]);
+
+  const refreshCurrentPage = useCallback(async () => {
+    if (page === 'tasks') return loadTasks();
+    if (page === 'history') return loadHistory();
+    if (page === 'settings') return loadSettings();
+    if (page === 'system') return Promise.all([loadStatus(), loadSettings()]).then(() => undefined);
+    return loadStatus();
+  }, [page, loadTasks, loadHistory, loadSettings, loadStatus]);
 
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
@@ -171,10 +221,22 @@ function App() {
   }, [locale]);
 
   useEffect(() => {
-    void loadCore();
-    const timer = window.setInterval(() => void loadCore(), 8000);
+    void loadStatus();
+    void loadSettings();
+  }, [loadStatus, loadSettings]);
+
+  useEffect(() => {
+    if (page === 'tasks') void loadTasks();
+    if (page === 'history') void loadHistory();
+    if (page === 'settings') void loadSettings();
+    if (page === 'system') void Promise.all([loadStatus(), loadSettings()]);
+  }, [page, loadTasks, loadHistory, loadSettings, loadStatus]);
+
+  useEffect(() => {
+    if (page !== 'tasks') return;
+    const timer = window.setInterval(() => void loadTasks(), 8000);
     return () => window.clearInterval(timer);
-  }, [loadCore]);
+  }, [page, loadTasks]);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -185,14 +247,14 @@ function App() {
         setTasks((current) => upsertTask(current, payload.task));
         if (payload.type === 'task_completed') {
           setFileLibrary(null);
-          void loadCore();
+          if (page === 'history') void loadHistory();
         }
       };
     } catch {
       socket = null;
     }
     return () => socket?.close();
-  }, [api, loadCore]);
+  }, [api, page, loadHistory]);
 
   function changePage(next: Page) {
     setPage(next);
@@ -220,28 +282,33 @@ function App() {
 
   return (
     <div className="shell">
-      <aside className="sidebar acrylic">
+      <aside className="sidebar glass-surface">
         <div className="brand">
           <img src="/static/assets/ytsage-wordmark.svg" alt="YTSage" />
+          <span className="brand-edition">Studio</span>
         </div>
         <nav className="nav" aria-label="Primary">
-          {navItems.map(([id, icon, labelKey]) => (
-            <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'files' ? openFilesPage() : changePage(id)}>
-              <span className="nav-icon">{icon}</span><span className="nav-label">{t(labelKey)}</span>
+          {navItems.map(([id, Icon, labelKey]) => (
+            <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'files' ? openFilesPage() : changePage(id)} title={t(labelKey)}>
+              <Icon className="nav-icon" aria-hidden="true" /><span className="nav-label">{t(labelKey)}</span>
             </button>
           ))}
         </nav>
+        <div className="sidebar-status">
+          <span className={`status-orb ${health?.healthy ? 'online' : 'attention'}`} />
+          <span><strong>YTSage Server</strong><small>{health?.healthy ? t('healthy') : t('needsTools')}</small></span>
+        </div>
       </aside>
 
       <main className="main">
-        <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={loadCore} error={error} />
+        <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={refreshCurrentPage} error={error} />
         {page === 'workspace' && <Workspace api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
-        {page === 'tasks' && <Tasks tasks={tasks} api={api} t={t} onChanged={loadCore} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
-        {page === 'history' && <History entries={history} api={api} t={t} onChanged={loadCore} onOpenFiles={openFilesPage} />}
+        {page === 'tasks' && <Tasks tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
+        {page === 'history' && <History entries={history} api={api} t={t} onChanged={loadHistory} onOpenFiles={openFilesPage} />}
         {page === 'files' && <Files library={fileLibrary} token={token} api={api} t={t} onLoaded={setFileLibrary} onPlay={playFile} />}
         {page === 'player' && <PlayerPage current={currentFile} queue={playQueue} folder={playFolder} token={token} api={api} t={t} onSelect={setCurrentFile} onQueue={setPlayQueue} onFolder={setPlayFolder} />}
-        {page === 'settings' && <Settings api={api} settings={settings} token={token} t={t} onToken={saveToken} onSaved={loadCore} />}
-        {page === 'system' && <System api={api} health={health} settings={settings} t={t} onChanged={loadCore} />}
+        {page === 'settings' && <Settings api={api} settings={settings} token={token} t={t} onToken={saveToken} onSaved={loadSettings} />}
+        {page === 'system' && <System api={api} health={health} settings={settings} t={t} onChanged={refreshCurrentPage} />}
       </main>
     </div>
   );
@@ -269,26 +336,28 @@ function TopBar({ page, health, authRequired, token, locale, t, onLocale, onToke
     system: ['systemTitle', 'systemDesc'],
   };
   return (
-    <div className="topbar">
-      <div className="stack">
+    <header className="topbar glass-toolbar">
+      <div className="page-heading">
+        <span className="page-kicker">YTSage</span>
         <h1>{t(titles[page][0])}</h1>
         <p className="muted">{t(titles[page][1])}</p>
         {error && <p className="error-line">{error}</p>}
       </div>
-      <div className="toolbar">
-        <label className="language-label">
-          <span>{t('language')}</span>
-          <select className="language-select" value={locale} onChange={(event) => onLocale(event.target.value as Locale)}>
-            <option value="zh">{t('chinese')}</option>
-            <option value="en">{t('english')}</option>
-          </select>
-        </label>
-        <span className="pill"><span className={`dot ${health?.healthy ? '' : 'amber'}`} />{health?.healthy ? t('healthy') : t('needsTools')}</span>
-        <span className="pill"><span className={`dot ${health?.auth_configured || authRequired ? 'amber' : 'blue'}`} />{health?.auth_configured || authRequired ? t('tokenRequired') : t('noToken')}</span>
-        {(authRequired || token) && <input className="token-input" value={token} placeholder={t('bearerToken')} onChange={(event) => onToken(event.target.value)} />}
-        <button onClick={onRefresh}>{t('refresh')}</button>
+      <div className="topbar-controls">
+        {(authRequired || token) && <div className="toolbar-group auth-control"><CircleUserRound size={16} aria-hidden="true" /><input className="token-input" value={token} placeholder={t('bearerToken')} onChange={(event) => onToken(event.target.value)} /></div>}
+        <div className="toolbar-group">
+          <span className="health-indicator" title={health?.healthy ? t('healthy') : t('needsTools')}><span className={`dot ${health?.healthy ? '' : 'amber'}`} />{health?.healthy ? t('healthy') : t('needsTools')}</span>
+          <label className="language-label" title={t('language')}>
+            <Languages size={15} aria-hidden="true" />
+            <select className="language-select" value={locale} onChange={(event) => onLocale(event.target.value as Locale)} aria-label={t('language')}>
+              <option value="zh">{t('chinese')}</option>
+              <option value="en">{t('english')}</option>
+            </select>
+          </label>
+        </div>
+        <button className="icon-button toolbar-refresh" onClick={onRefresh} title={t('refresh')} aria-label={t('refresh')}><RefreshCw size={17} /></button>
       </div>
-    </div>
+    </header>
   );
 }
 
@@ -644,14 +713,15 @@ type PlaylistItemState = 'pending' | 'downloading' | 'completed' | 'failed';
 function playlistItemState(task: TaskResponse, entry: PlaylistEntry): PlaylistItemState {
   const failed = new Set(task.progress.playlist_failed_indexes || []);
   if (failed.has(entry.index)) return 'failed';
+  const completed = new Set(task.progress.playlist_completed_indexes || []);
+  if (completed.has(entry.index)) return 'completed';
   const currentIndex = task.progress.playlist_current_index;
-  const lastIndex = task.progress.playlist_last_index || currentIndex;
-  if (task.status === 'completed') return 'completed';
-  if (task.status === 'failed' || task.status === 'cancelled' || task.status === 'interrupted') {
-    return lastIndex && entry.index <= lastIndex ? 'completed' : 'pending';
-  }
   if (currentIndex === entry.index) return 'downloading';
-  if (currentIndex && entry.index < currentIndex) return 'completed';
+  if (task.status === 'completed') return 'completed';
+
+  // Older tasks predate exact per-item completion tracking. For interrupted
+  // downloads, the current/last index itself may be only partially downloaded.
+  if (!task.progress.playlist_completed_indexes && currentIndex && entry.index < currentIndex) return 'completed';
   return 'pending';
 }
 
@@ -677,10 +747,24 @@ function playlistItemStateTone(state: PlaylistItemState): string {
 
 function TaskPlaylist({ task, api, t, onChanged }: { task: TaskResponse; api: ReturnType<typeof createApiClient>; t: T; onChanged: () => void }) {
   const entries = taskPlaylistEntries(task);
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
+  const currentEntryPosition = entries.findIndex((entry) => entry.index === task.progress.playlist_current_index);
+  const currentEntryPage = currentEntryPosition >= 0 ? Math.floor(currentEntryPosition / pageSize) + 1 : null;
   const [expanded, setExpanded] = useState(() => task.status === 'running' || task.status === 'queued');
+  const [page, setPage] = useState(() => currentEntryPage || 1);
+  const normalizedPage = Math.min(pageCount, Math.max(1, page));
+  const visibleEntries = entries.slice((normalizedPage - 1) * pageSize, normalizedPage * pageSize);
+  const pageItems = paginationItems(normalizedPage, pageCount);
   useEffect(() => {
     if (task.status === 'running') setExpanded(true);
   }, [task.status]);
+  useEffect(() => {
+    if (currentEntryPage) setPage(currentEntryPage);
+  }, [currentEntryPage]);
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
   if (!entries.length) return null;
   async function retryItem(entry: PlaylistEntry) {
     await api.retryPlaylistItem(task.id, entry.index);
@@ -690,17 +774,25 @@ function TaskPlaylist({ task, api, t, onChanged }: { task: TaskResponse; api: Re
     result[playlistItemState(task, entry)] += 1;
     return result;
   }, { pending: 0, downloading: 0, completed: 0, failed: 0 });
-  return <div className="task-playlist"><div className="section-heading"><h3>{t('taskPlaylist')}</h3><div className="toolbar"><span className="badge blue">{entries.length}</span><span className="badge green">{t('itemCompleted')}: {counts.completed}</span><span className="badge red">{t('itemFailed')}: {counts.failed}</span><button onClick={() => setExpanded((value) => !value)}>{expanded ? t('collapse') : t('expand')}</button></div></div>
-    {expanded && <div className="task-playlist-list">{entries.map((entry) => {
-      const state = playlistItemState(task, entry);
-      const failure = task.progress.playlist_failures?.[String(entry.index)];
-      return <div key={entry.index} className={`task-playlist-item ${state === 'downloading' ? 'current' : ''}`} title={failure || undefined}>
-        <span className="badge">{entry.index}</span>
-        <strong>{entry.title || entry.id || entry.url || '-'}</strong>
-        <span className={`badge ${playlistItemStateTone(state)}`}>{playlistItemStateLabel(state, t)}</span>
-        {state === 'failed' && <button onClick={() => void retryItem(entry)}>{t('retryItem')}</button>}
-      </div>;
-    })}</div>}
+  return <div className="task-playlist">
+    <div className="section-heading"><h3>{t('taskPlaylist')}</h3><div className="toolbar"><span className="badge blue">{entries.length}</span><span className="badge green">{t('itemCompleted')}: {counts.completed}</span><span className="badge red">{t('itemFailed')}: {counts.failed}</span><button onClick={() => setExpanded((value) => !value)}>{expanded ? t('collapse') : t('expand')}</button></div></div>
+    {expanded && <>
+      <div className="task-playlist-list">{visibleEntries.map((entry) => {
+        const state = playlistItemState(task, entry);
+        const failure = task.progress.playlist_failures?.[String(entry.index)];
+        return <div key={entry.index} className={`task-playlist-item ${state === 'downloading' ? 'current' : ''}`} title={failure || undefined}>
+          <span className="badge">{entry.index}</span>
+          <strong>{entry.title || entry.id || entry.url || '-'}</strong>
+          <span className={`badge ${playlistItemStateTone(state)}`}>{playlistItemStateLabel(state, t)}</span>
+          {state === 'failed' && <button onClick={() => void retryItem(entry)}>{t('retryItem')}</button>}
+        </div>;
+      })}</div>
+      {pageCount > 1 && <div className="task-playlist-pagination">
+        <span className="muted">{formatPageInfo(t('taskPlaylistPageInfo'), normalizedPage, pageCount, entries.length)}</span>
+        <div className="page-list compact-page-list" aria-label="Pagination">{pageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`task-playlist-ellipsis-${index}`}>...</span> : <button className={item === normalizedPage ? 'active' : ''} key={item} onClick={() => setPage(item)} disabled={item === normalizedPage} aria-current={item === normalizedPage ? 'page' : undefined}>{item}</button>)}</div>
+        <div className="toolbar"><button onClick={() => setPage(Math.max(1, normalizedPage - 1))} disabled={normalizedPage <= 1}>{t('previousPage')}</button><button onClick={() => setPage(Math.min(pageCount, normalizedPage + 1))} disabled={normalizedPage >= pageCount}>{t('nextPage')}</button></div>
+      </div>}
+    </>}
   </div>;
 }
 
@@ -719,7 +811,7 @@ function Tasks({ tasks, api, t, onChanged, onCancel }: { tasks: TaskResponse[]; 
     <div className="row-top"><div className="stack"><strong>{String(task.options.url || task.url)}</strong><span className="muted">{task.progress.current_filename || task.output_path || task.id}</span></div><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div>
     <TaskPlaylist task={task} api={api} t={t} onChanged={onChanged} />
     <div className="progress"><span style={{ width: `${Math.max(0, Math.min(100, task.progress.percent || 0))}%` }} /></div>
-    <div className="row-top"><span className="muted">{task.progress.status_text || `${task.progress.speed || '-'} - ETA ${task.progress.eta || '-'}`}</span><div className="toolbar">{['queued', 'running'].includes(task.status) && <button className="danger" onClick={() => void onCancel(task.id)}>{t('cancel')}</button>}<button onClick={() => void deleteTask(task.id)}>{t('deleteRecord')}</button></div></div>
+    <div className="row-top"><div className="toolbar"><span className="muted">{task.progress.status_text || '-'}</span>{task.status === 'running' && task.progress.speed && <span className="badge blue">{t('downloadSpeed')}: {task.progress.speed}</span>}{task.status === 'running' && task.progress.eta && <span className="badge">{t('eta')}: {task.progress.eta}</span>}</div><div className="toolbar">{['queued', 'running'].includes(task.status) && <button className="danger" onClick={() => void onCancel(task.id)}>{t('cancel')}</button>}<button onClick={() => void deleteTask(task.id)}>{t('deleteRecord')}</button></div></div>
     {task.error && <pre className="log-box">{task.error}</pre>}
   </div>)}</div></div>;
 }
@@ -748,26 +840,45 @@ function Files({ library, token, api, t, onLoaded, onPlay }: { library: FileList
   const [folder, setFolder] = useState('');
   const [mediaPage, setMediaPage] = useState(1);
   const files = library?.files || [];
-  const mediaFiles = files.filter((file) => file.playable && (file.media_type === 'video' || file.media_type === 'audio') && directParent(file.relative_path) === folder);
   const mediaPageSize = 30;
-  const mediaPages = Math.max(1, Math.ceil(mediaFiles.length / mediaPageSize));
+  const mediaFiles = files.filter((file) => file.playable && (file.media_type === 'video' || file.media_type === 'audio') && directParent(file.relative_path) === folder);
+  const mediaPages = Math.max(1, Math.ceil((library?.total || 0) / mediaPageSize));
   const normalizedMediaPage = Math.min(mediaPages, Math.max(1, mediaPage));
-  const visibleMediaFiles = mediaFiles.slice((normalizedMediaPage - 1) * mediaPageSize, normalizedMediaPage * mediaPageSize);
+  const visibleMediaFiles = mediaFiles;
   const mediaPageItems = paginationItems(normalizedMediaPage, mediaPages);
   const folderItems = library?.folders || [];
-  const limit = library?.limit || 200;
+  const limit = mediaPageSize;
   const authSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
   const fileUrl = (url?: string | null) => url ? `${url}${authSuffix}` : '#';
   const folderUrl = folder ? `${api.downloadFolderUrl(folder)}${token ? `&token=${encodeURIComponent(token)}` : ''}` : '#';
   const manifestUrl = (format: ManifestFormat) => folder ? `${api.folderManifestUrl(folder, format)}${token ? `&token=${encodeURIComponent(token)}` : ''}` : '#';
   const aria2Filename = `${(folder.split('/').pop() || folder || 'downloads')}.aria2.txt`;
   async function load(nextOffset = 0, nextQuery = query, nextFolder = folder) {
-    onLoaded(await api.files(nextQuery, nextFolder, nextOffset, limit));
+    onLoaded(await api.files(nextQuery, nextFolder, nextOffset, limit, true, true));
   }
   async function changeFolder(value: string) {
     setFolder(value);
     setMediaPage(1);
     await load(0, query, value);
+  }
+  async function changeMediaPage(nextPage: number) {
+    const page = Math.min(mediaPages, Math.max(1, nextPage));
+    setMediaPage(page);
+    await load((page - 1) * mediaPageSize);
+  }
+  async function removeFile(file: FileEntry) {
+    if (!window.confirm(t('confirmDeleteFile').replace('{name}', file.name))) return;
+    await api.deleteFile(file.id);
+    setMediaPage(1);
+    await load(0);
+  }
+  async function removeFolder() {
+    if (!folder || !window.confirm(t('confirmDeleteFolder').replace('{name}', folder))) return;
+    await api.deleteFolder(folder);
+    const parent = directParent(folder);
+    setFolder(parent);
+    setMediaPage(1);
+    await load(0, query, parent);
   }
   useEffect(() => {
     if (!library) void load(0);
@@ -785,10 +896,11 @@ function Files({ library, token, api, t, onLoaded, onPlay }: { library: FileList
       <button onClick={() => { setMediaPage(1); void load(0); }}>{t('search')}</button>
       <ManifestExport disabled={!folder} manifestUrl={manifestUrl} aria2Filename={aria2Filename} t={t} />
       <a className={`button-link ${folder ? '' : 'disabled'}`} href={folderUrl} aria-disabled={!folder} onClick={(event) => { if (!folder) event.preventDefault(); }}>{t('downloadFolder')}</a>
+      <button className="danger" disabled={!folder} onClick={() => void removeFolder()}>{t('deleteFolder')}</button>
     </div></div><div className="panel-body media-table-body">
       {!mediaFiles.length && <div className="empty-state">{t('noFiles')}</div>}
-      {!!mediaFiles.length && <div className="media-table-wrap"><table className="media-table"><thead><tr><th>{t('title')}</th><th>{t('type')}</th><th>{t('size')}</th><th></th></tr></thead><tbody>{visibleMediaFiles.map((file) => <tr key={file.id}><td><strong>{file.name}</strong></td><td><span className="badge green">{mediaLabel(file.media_type, t)}</span></td><td>{formatBytes(file.size)}</td><td><div className="toolbar compact-actions"><button onClick={() => onPlay(file, mediaFiles, folder)}>{t('play')}</button><a className="button-link" href={fileUrl(file.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(file.download_url))}>{t('copyLink')}</button></div></td></tr>)}</tbody></table></div>}
-      <div className="pagination-row"><button onClick={() => setMediaPage(Math.max(1, normalizedMediaPage - 1))} disabled={normalizedMediaPage <= 1}>{t('previousPage')}</button><span className="muted">{formatPageInfo(t('pageInfo'), normalizedMediaPage, mediaPages, mediaFiles.length)}</span><div className="page-list" aria-label="Pagination">{mediaPageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`ellipsis-${index}`}>...</span> : <button className={item === normalizedMediaPage ? 'active' : ''} key={item} onClick={() => setMediaPage(item)} disabled={item === normalizedMediaPage} aria-current={item === normalizedMediaPage ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => setMediaPage(Math.min(mediaPages, normalizedMediaPage + 1))} disabled={normalizedMediaPage >= mediaPages}>{t('nextPage')}</button></div>
+      {!!mediaFiles.length && <div className="media-table-wrap"><table className="media-table"><thead><tr><th>{t('title')}</th><th>{t('type')}</th><th>{t('size')}</th><th></th></tr></thead><tbody>{visibleMediaFiles.map((file) => <tr key={file.id}><td><strong>{file.name}</strong></td><td><span className="badge green">{mediaLabel(file.media_type, t)}</span></td><td>{formatBytes(file.size)}</td><td><div className="toolbar compact-actions"><button onClick={() => onPlay(file, mediaFiles, folder)}>{t('play')}</button><a className="button-link" href={fileUrl(file.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(file.download_url))}>{t('copyLink')}</button><button className="danger" onClick={() => void removeFile(file)}>{t('deleteFile')}</button></div></td></tr>)}</tbody></table></div>}
+      <div className="pagination-row"><button onClick={() => void changeMediaPage(normalizedMediaPage - 1)} disabled={normalizedMediaPage <= 1}>{t('previousPage')}</button><span className="muted">{formatPageInfo(t('pageInfo'), normalizedMediaPage, mediaPages, library?.total || 0)}</span><div className="page-list" aria-label="Pagination">{mediaPageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`ellipsis-${index}`}>...</span> : <button className={item === normalizedMediaPage ? 'active' : ''} key={item} onClick={() => void changeMediaPage(item)} disabled={item === normalizedMediaPage} aria-current={item === normalizedMediaPage ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => void changeMediaPage(normalizedMediaPage + 1)} disabled={normalizedMediaPage >= mediaPages}>{t('nextPage')}</button></div>
     </div></section>
   </div>;
 }
@@ -816,17 +928,30 @@ function ManifestExport({ disabled, manifestUrl, aria2Filename, t }: { disabled:
 function PlayerPage({ current, queue, folder, token, api, t, onSelect, onQueue, onFolder }: { current: FileEntry | null; queue: FileEntry[]; folder: string; token: string; api: ReturnType<typeof createApiClient>; t: T; onSelect: (file: FileEntry | null) => void; onQueue: (files: FileEntry[]) => void; onFolder: (folder: string) => void }) {
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [videoFit, setVideoFit] = useState<'cover' | 'contain'>('contain');
+  const [videoAspectRatio, setVideoAspectRatio] = useState(16 / 9);
   const playerRef = useRef<HTMLDivElement | null>(null);
   const artRef = useRef<Artplayer | null>(null);
   const authSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
   const fileUrl = (url?: string | null) => url ? `${url}${authSuffix}` : '#';
   const active = current || queue[0] || null;
+  const activeIndex = active ? queue.findIndex((file) => file.id === active.id) : -1;
+
+  function selectRelative(offset: number) {
+    const next = queue[activeIndex + offset];
+    if (next) onSelect(next);
+  }
+
+  function changeVideoFit(nextFit: 'cover' | 'contain') {
+    setVideoFit(nextFit);
+    playerRef.current?.style.setProperty('--video-fit', nextFit);
+  }
 
   async function loadFolder(nextFolder: string) {
     setLoading(true);
     onFolder(nextFolder);
     try {
-      const result = await api.files('', nextFolder, 0, 200);
+      const result = await api.files('', nextFolder, 0, 200, true, true);
       setFolders(result.folders);
       const mediaFiles = result.files.filter((file) => file.playable && (file.media_type === 'video' || file.media_type === 'audio'));
       onQueue(mediaFiles);
@@ -835,10 +960,6 @@ function PlayerPage({ current, queue, folder, token, api, t, onSelect, onQueue, 
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    void api.files('', '', 0, 1).then((result) => setFolders(result.folders));
-  }, [api]);
 
   useEffect(() => {
     if (!queue.length) void loadFolder(folder);
@@ -866,7 +987,7 @@ function PlayerPage({ current, queue, folder, token, api, t, onSelect, onQueue, 
           },
         },
       ],
-      aspectRatio: true,
+      aspectRatio: false,
       fullscreen: true,
       fullscreenWeb: true,
       hotkey: true,
@@ -874,21 +995,73 @@ function PlayerPage({ current, queue, folder, token, api, t, onSelect, onQueue, 
       mutex: true,
       moreVideoAttr: { preload: 'metadata' },
     });
+    playerRef.current?.style.setProperty('--video-fit', videoFit);
+    const updateVideoRatio = () => {
+      const { videoWidth, videoHeight } = artRef.current?.video || {};
+      if (videoWidth && videoHeight) setVideoAspectRatio(videoWidth / videoHeight);
+    };
+    artRef.current.video.addEventListener('loadedmetadata', updateVideoRatio);
+    updateVideoRatio();
     return () => {
+      artRef.current?.video.removeEventListener('loadedmetadata', updateVideoRatio);
       artRef.current?.destroy(false);
       artRef.current = null;
     };
   }, [active?.id, token]);
 
+  useEffect(() => {
+    playerRef.current?.style.setProperty('--video-fit', videoFit);
+  }, [videoFit]);
+
   return <div className="watch-layout">
     <section className="watch-main">
-      <div className="watch-player-shell">
-        {!active && <div className="empty-state">{t('selectPlayable')}</div>}
-        {active && <div className={`art-player-host ${active.media_type === 'audio' ? 'audio-mode' : ''}`} ref={playerRef} />}
+      <div className="watch-stage">
+        <div className="watch-player-shell" style={{ aspectRatio: active?.media_type === 'video' ? String(videoAspectRatio) : '16 / 9' }}>
+          {!active && <div className="watch-empty">
+            <span className="watch-empty-icon"><MonitorPlay size={30} aria-hidden="true" /></span>
+            <h2>{t('selectPlayable')}</h2>
+            <button className="primary" onClick={() => void loadFolder(folder)}>{t('openFiles')}</button>
+          </div>}
+          {active && <div className={`art-player-host ${active.media_type === 'audio' ? 'audio-mode' : ''}`} ref={playerRef} />}
+        </div>
       </div>
-      {active && <div className="watch-meta"><h2>{active.name}</h2><p className="muted">{playlistMeta(active, t)}</p><div className="toolbar"><a className="button-link primary-link" href={fileUrl(active.download_url)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(fileUrl(active.download_url))}>{t('copyLink')}</button></div></div>}
+      {active && <div className="watch-meta">
+        <div className="watch-title-block">
+          <span className="watch-now-playing">{t('player')}</span>
+          <h2 title={active.name}>{active.name}</h2>
+          <p className="muted">{playlistMeta(active, t)}</p>
+        </div>
+        <div className="watch-actions">
+          {active.media_type === 'video' && <div className="watch-fit-control" aria-label={t('player')}>
+            <button className={videoFit === 'cover' ? 'active' : ''} onClick={() => changeVideoFit('cover')}>{t('playerFill')}</button>
+            <button className={videoFit === 'contain' ? 'active' : ''} onClick={() => changeVideoFit('contain')}>{t('playerFit')}</button>
+          </div>}
+          <div className="watch-skip-controls">
+            <button className="icon-button" onClick={() => selectRelative(-1)} disabled={activeIndex <= 0} title={t('previousPage')} aria-label={t('previousPage')}><ChevronRight className="previous-icon" size={17} /></button>
+            <span>{activeIndex >= 0 ? `${activeIndex + 1} / ${queue.length}` : '-'}</span>
+            <button className="icon-button" onClick={() => selectRelative(1)} disabled={activeIndex < 0 || activeIndex >= queue.length - 1} title={t('nextPage')} aria-label={t('nextPage')}><ChevronRight size={17} /></button>
+          </div>
+          <a className="button-link primary-link" href={fileUrl(active.download_url)}><Download size={15} />{t('download')}</a>
+          <button className="icon-button" onClick={() => navigator.clipboard?.writeText(fileUrl(active.download_url))} title={t('copyLink')} aria-label={t('copyLink')}><Copy size={15} /></button>
+        </div>
+      </div>}
     </section>
-    <aside className="watch-list panel acrylic"><div className="panel-header"><h2>{t('playQueue')}</h2><span className="badge blue">{queue.length}</span></div><div className="watch-folder-bar"><label>{t('playerFolder')}<select value={folder} onChange={(event) => void loadFolder(event.target.value)}><option value="">{t('allFolders')}</option>{folders.map((item) => <option key={item} value={item}>{item}</option>)}</select></label></div><div className="watch-list-body">{loading && <div className="empty-state">{t('working')}</div>}{!loading && !queue.length && <div className="empty-state">{t('selectPlayable')}</div>}{!loading && queue.map((file) => <button key={file.id} className={`watch-list-item ${active?.id === file.id ? 'active' : ''}`} onClick={() => onSelect(file)}><span className="watch-thumb">{file.media_type === 'audio' ? 'A' : 'V'}</span><span className="stack"><strong>{file.name}</strong><span className="muted">{playlistMeta(file, t)}</span></span></button>)}</div></aside>
+    <aside className="watch-list">
+      <div className="watch-list-header">
+        <div><span className="watch-eyebrow">{t('playerFolder')}</span><h2>{t('playQueue')}</h2></div>
+        <span className="queue-count">{queue.length}</span>
+      </div>
+      <div className="watch-folder-bar"><select value={folder} onChange={(event) => void loadFolder(event.target.value)} aria-label={t('playerFolder')}><option value="">{t('allFolders')}</option>{folders.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
+      <div className="watch-list-body">
+        {loading && <div className="watch-queue-empty">{t('working')}</div>}
+        {!loading && !queue.length && <div className="watch-queue-empty">{t('selectPlayable')}</div>}
+        {!loading && queue.map((file, index) => <button key={file.id} className={`watch-list-item ${active?.id === file.id ? 'active' : ''}`} onClick={() => onSelect(file)}>
+          <span className="watch-index">{active?.id === file.id ? <Play size={13} fill="currentColor" /> : index + 1}</span>
+          <span className="watch-media-icon">{file.media_type === 'audio' ? <Music2 size={16} /> : <MonitorPlay size={16} />}</span>
+          <span className="watch-item-copy"><strong>{file.name}</strong><span>{mediaLabel(file.media_type, t)} · {formatBytes(file.size)}</span></span>
+        </button>)}
+      </div>
+    </aside>
   </div>;
 }
 

@@ -22,7 +22,7 @@ from .services import analyzer
 from .services.auth import require_auth, require_websocket_auth
 from .services.cookies import configured_cookie_profiles, cookie_file_path, normalize_cookie_profile, normalize_cookies
 from .services.dependencies import ensure_runtime_dependencies, ffmpeg_version, update_runtime_dependencies, ytdlp_version
-from .services.files import folder_download_response, folder_manifest_response, list_files, ranged_download_response, resolve_download_file, resolve_download_folder, stream_response
+from .services.files import delete_download_file, delete_download_folder, folder_download_response, folder_manifest_response, list_files, ranged_download_response, resolve_download_file, resolve_download_folder, stream_response
 from .services.settings import default_video_resolution, filename_template, save_default_video_resolution, save_filename_template
 from .services.storage import Storage
 from .services.task_manager import TaskManager
@@ -115,8 +115,13 @@ def create_app() -> FastAPI:
         return await manager.create_task(request)
 
     @app.get("/api/tasks", response_model=list[TaskResponse])
-    def list_tasks(_: None = Depends(auth_dependency)) -> list[TaskResponse]:
-        return manager.list_tasks()
+    def list_tasks(
+        offset: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=200),
+        active_only: bool = Query(False),
+        _: None = Depends(auth_dependency),
+    ) -> list[TaskResponse]:
+        return manager.list_tasks(limit=limit, offset=offset, active_only=active_only)
 
     @app.get("/api/tasks/{task_id}", response_model=TaskResponse)
     def get_task(task_id: str, _: None = Depends(auth_dependency)) -> TaskResponse:
@@ -170,8 +175,12 @@ def create_app() -> FastAPI:
             manager.unsubscribe(queue)
 
     @app.get("/api/history")
-    def history(limit: int = Query(100, ge=1, le=500), _: None = Depends(auth_dependency)):
-        return storage.list_history(limit=limit)
+    def history(
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=200),
+        _: None = Depends(auth_dependency),
+    ):
+        return storage.list_history(limit=limit, offset=offset)
 
     @app.delete("/api/history/{history_id}", status_code=204)
     def delete_history(history_id: str, _: None = Depends(auth_dependency)) -> Response:
@@ -193,9 +202,25 @@ def create_app() -> FastAPI:
         folder: str | None = None,
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=200),
+        media_only: bool = Query(False),
+        direct_only: bool = Query(False),
         _: None = Depends(auth_dependency),
     ):
-        return list_files(config.download_dir, request, query=q, folder=folder, offset=offset, limit=limit)
+        return list_files(
+            config.download_dir,
+            request,
+            query=q,
+            folder=folder,
+            offset=offset,
+            limit=limit,
+            media_only=media_only,
+            direct_only=direct_only,
+        )
+
+    @app.delete("/api/folders", status_code=204)
+    def delete_folder(folder: str, _: None = Depends(auth_dependency)) -> Response:
+        delete_download_folder(config.download_dir, folder)
+        return Response(status_code=204)
 
     @app.get("/api/folders/download", name="download_folder")
     def download_folder(folder: str | None = None, _: None = Depends(auth_dependency)):
@@ -206,6 +231,11 @@ def create_app() -> FastAPI:
     def folder_manifest(request: Request, folder: str | None = None, format: str = "aria2", _: None = Depends(auth_dependency)):
         folder_path, archive_name = resolve_download_folder(config.download_dir, folder)
         return folder_manifest_response(config.download_dir, folder_path, archive_name, request, format)
+
+    @app.delete("/api/files/{file_id}", status_code=204)
+    def delete_file(file_id: str, _: None = Depends(auth_dependency)) -> Response:
+        delete_download_file(config.download_dir, file_id)
+        return Response(status_code=204)
 
     @app.get("/api/files/{file_id}/download", name="download_file")
     def download_file(file_id: str, range_header: Annotated[str | None, Header(alias="Range")] = None, _: None = Depends(auth_dependency)):

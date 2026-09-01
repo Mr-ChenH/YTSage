@@ -15,7 +15,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YTSAGE_QUEUE_CONCURRENCY=2
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl gosu \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu unzip \
+    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
+    && deno --version \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

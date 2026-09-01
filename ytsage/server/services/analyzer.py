@@ -16,7 +16,7 @@ from fastapi import HTTPException, status
 
 from ..models import AnalyzeRequest, AnalyzeResponse, FormatInfo, PlaylistEntry, SubtitleInfo
 from .cookies import cookie_file_for_url
-from .dependencies import ytdlp_command
+from .dependencies import ytdlp_base_command
 
 
 def _as_str(value: Any) -> str | None:
@@ -123,7 +123,7 @@ def _playlist_entry(index: int, item: dict[str, Any]) -> PlaylistEntry:
 def _formats_from_single_entry(url: str | None, cookie_file: Path | None, timeout: int) -> list[FormatInfo]:
     if not url:
         return []
-    cmd = [*ytdlp_command(), "--dump-single-json", "--no-warnings", "--skip-download", "--no-playlist"]
+    cmd = [*ytdlp_base_command(), "--dump-single-json", "--no-warnings", "--skip-download", "--no-playlist"]
     if cookie_file is not None:
         cmd.extend(["--cookies", str(cookie_file)])
     cmd.append(url)
@@ -287,6 +287,29 @@ def _bilibili_episode_title(episode: dict[str, Any]) -> str | None:
     return None
 
 
+def _bilibili_pages_entries(data: dict[str, Any], bvid: str) -> list[PlaylistEntry]:
+    entries: list[PlaylistEntry] = []
+    owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
+    channel = _as_str(owner.get("name"))
+    default_cover = _as_str(data.get("pic"))
+    for position, page_data in enumerate(_as_dict_list(data.get("pages")), start=1):
+        page = _as_int(page_data.get("page")) or position
+        entry_url = f"https://www.bilibili.com/video/{bvid}/?p={page}"
+        entries.append(
+            PlaylistEntry(
+                index=position,
+                id=f"{bvid}_p{page}",
+                title=_as_str(page_data.get("part")) or f"P{page}",
+                url=entry_url,
+                webpage_url=entry_url,
+                duration=_as_float(page_data.get("duration")),
+                channel=channel,
+                thumbnail_url=_as_str(page_data.get("first_frame")) or default_cover,
+            )
+        )
+    return entries
+
+
 def _bilibili_collection_from_api(url: str, cookie_file: Path | None = None, timeout: int = 15) -> tuple[str | None, list[PlaylistEntry]]:
     bvid = _bilibili_bvid_from_url(url)
     if not bvid:
@@ -313,7 +336,13 @@ def _bilibili_collection_from_api(url: str, cookie_file: Path | None = None, tim
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
         return None, []
-    return _bilibili_entries_from_season(data.get("ugc_season"))
+    ugc_title, ugc_entries = _bilibili_entries_from_season(data.get("ugc_season"))
+    if ugc_entries:
+        return ugc_title, ugc_entries
+    page_entries = _bilibili_pages_entries(data, bvid)
+    if len(page_entries) > 1:
+        return _as_str(data.get("title")), page_entries
+    return None, []
 
 
 def _bilibili_entries_from_season(season: Any) -> tuple[str | None, list[PlaylistEntry]]:
@@ -375,7 +404,7 @@ def _bilibili_collection_entries(url: str, cookie_file: Path | None = None, time
 
 
 def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None = None) -> AnalyzeResponse:
-    cmd = [*ytdlp_command(), "--dump-single-json", "--flat-playlist", "--no-warnings", "--skip-download"]
+    cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--no-warnings", "--skip-download"]
     cookie_file: Path | None = None
     if config_dir is not None:
         cookie_file = cookie_file_for_url(config_dir, request.url)

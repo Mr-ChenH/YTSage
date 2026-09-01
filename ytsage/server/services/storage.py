@@ -120,9 +120,15 @@ class Storage:
             raise KeyError(task_id)
         return self._task_from_row(row)
 
-    def list_tasks(self, limit: int = 100) -> list[TaskResponse]:
+    def list_tasks(self, limit: int = 100, offset: int = 0, active_only: bool = False) -> list[TaskResponse]:
+        query = "SELECT * FROM tasks"
+        values: list[object] = []
+        if active_only:
+            query += " WHERE status IN ('queued', 'running')"
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        values.extend([limit, offset])
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._conn.execute(query, values).fetchall()
         return [self._task_from_row(row) for row in rows]
 
     def delete_task(self, task_id: str) -> None:
@@ -171,9 +177,12 @@ class Storage:
                 ),
             )
 
-    def list_history(self, limit: int = 100) -> list[HistoryEntry]:
+    def list_history(self, limit: int = 100, offset: int = 0) -> list[HistoryEntry]:
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM history ORDER BY downloaded_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._conn.execute(
+                "SELECT * FROM history ORDER BY downloaded_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
         return [self._history_from_row(row) for row in rows]
 
     def delete_history(self, history_id: str) -> None:

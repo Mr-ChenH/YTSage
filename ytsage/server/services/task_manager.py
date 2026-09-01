@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import locale
 import os
+import re
 import signal
 import subprocess
 import uuid
@@ -32,6 +33,18 @@ def _decode_output_line(raw: bytes) -> str:
         except (LookupError, UnicodeDecodeError):
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def _playlist_item_filename_template(template: str, title: str, index: int) -> str:
+    replacements = {
+        "%(playlist_title)s": title,
+        "%(playlist_index)s": str(index),
+    }
+    result = template
+    for placeholder, value in replacements.items():
+        result = result.replace(placeholder, value)
+    result = re.sub(r"%\(playlist_index\)0?\d*d", lambda match: format(index, match.group(0).split(")", 1)[1][:-1] or "d"), result)
+    return result
 
 
 class TaskManager:
@@ -75,20 +88,22 @@ class TaskManager:
         if entry is None:
             raise KeyError(f"playlist item {playlist_index} not found")
         progress = self._copy_progress(task.progress)
-        progress.playlist_failed_indexes = [item for item in progress.playlist_failed_indexes if item != playlist_index]
+        if not progress.playlist_completed_indexes and progress.playlist_last_index:
+            progress.playlist_completed_indexes = [
+                item.index for item in entries if item.index < progress.playlist_last_index
+            ]
         failures = dict(progress.playlist_failures)
         failures.pop(str(playlist_index), None)
         progress.playlist_failures = failures
         progress.playlist_current_index = None
-        progress.playlist_last_index = playlist_index - 1 if playlist_index > 1 else None
         progress.status_text = f"Retry queued for playlist item {playlist_index}"
         updated = self.storage.update_task(task_id, status="queued", progress=progress, error=None, finished_at=None)
         await self.queue.put(f"{task_id}:{playlist_index}")
         await self._publish("task_retry_queued", updated)
         return updated
 
-    def list_tasks(self) -> list[TaskResponse]:
-        return self.storage.list_tasks()
+    def list_tasks(self, limit: int = 100, offset: int = 0, active_only: bool = False) -> list[TaskResponse]:
+        return self.storage.list_tasks(limit=limit, offset=offset, active_only=active_only)
 
     def get_task(self, task_id: str) -> TaskResponse:
         return self.storage.get_task(task_id)
@@ -146,7 +161,11 @@ class TaskManager:
     async def _run_task(self, task: TaskResponse) -> None:
         request = CreateTaskRequest(**task.options)
         progress = task.progress
-        output_tail, return_code, output_path, progress = await self._execute_download(task, request, progress)
+        entries = self._playlist_entries(task)
+        if entries:
+            output_tail, return_code, output_path, progress = await self._execute_playlist_entries(task, request, entries, progress)
+        else:
+            output_tail, return_code, output_path, progress = await self._execute_with_youtube_fallback(task, request, progress)
         if self.storage.get_task(task.id).status == "cancelled":
             return
 
@@ -175,20 +194,93 @@ class TaskManager:
             )
             await self._publish("task_failed", failed)
 
+    async def _execute_playlist_entries(
+        self,
+        task: TaskResponse,
+        request: CreateTaskRequest,
+        entries: list[PlaylistEntry],
+        progress: TaskProgress,
+    ) -> tuple[list[str], int, str | None, TaskProgress]:
+        all_output: list[str] = []
+        last_output_path: str | None = None
+
+        for position, entry in enumerate(entries, start=1):
+            if self.storage.get_task(task.id).status == "cancelled":
+                break
+            item_request = request.model_copy(deep=True)
+            item_request.url = entry.url or entry.webpage_url or request.url
+            item_request.playlist_items = None
+            item_request.playlist_entries = []
+            item_request.filename_template = _playlist_item_filename_template(
+                request.filename_template,
+                request.playlist_title or "playlist",
+                entry.index,
+            )
+            progress.playlist_current_index = entry.index
+            progress.playlist_last_index = entry.index
+            progress.playlist_total = len(entries)
+            progress.percent = None
+            progress.status_text = f"Downloading playlist item {position} of {len(entries)}"
+
+            output, return_code, output_path, progress = await self._execute_with_youtube_fallback(
+                task,
+                item_request,
+                progress,
+                fallback_status=f"Downloaded playlist item {position} at 360p after YouTube rejected the selected format",
+            )
+            item_error = next((line for line in reversed(output) if "ERROR:" in line), None) if return_code != 0 else None
+            all_output.extend(output)
+            all_output = all_output[-20:]
+            if output_path:
+                last_output_path = output_path
+            failures = dict(progress.playlist_failures)
+            failed_indexes = list(progress.playlist_failed_indexes)
+            completed_indexes = list(progress.playlist_completed_indexes)
+            if return_code != 0 or item_error:
+                completed_indexes = [index for index in completed_indexes if index != entry.index]
+                if entry.index not in failed_indexes:
+                    failed_indexes.append(entry.index)
+                failures[str(entry.index)] = item_error.removeprefix("ERROR:").strip() if item_error else ("\n".join(output[-8:]) or f"yt-dlp exited with code {return_code}")
+            else:
+                failed_indexes = [index for index in failed_indexes if index != entry.index]
+                failures.pop(str(entry.index), None)
+                if entry.index not in completed_indexes:
+                    completed_indexes.append(entry.index)
+            progress.playlist_failed_indexes = failed_indexes
+            progress.playlist_completed_indexes = sorted(completed_indexes)
+            progress.playlist_failures = failures
+            progress.playlist_current_index = None
+            progress.playlist_last_index = entry.index
+            progress.percent = position / len(entries) * 100
+            updated = self.storage.update_task(task.id, progress=progress)
+            await self._publish("task_progress", updated)
+
+        return all_output, 0, last_output_path, progress
+
     async def _retry_playlist_item(self, task: TaskResponse, playlist_index: int) -> None:
         entries = self._playlist_entries(task)
         entry = next((item for item in entries if item.index == playlist_index), None)
         if entry is None:
             return
         request = CreateTaskRequest(**task.options)
-        request.playlist_items = str(playlist_index)
-        request.playlist_entries = [entry]
+        request.url = entry.url or entry.webpage_url or request.url
+        request.playlist_items = None
+        request.playlist_entries = []
+        request.filename_template = _playlist_item_filename_template(
+            request.filename_template,
+            request.playlist_title or "playlist",
+            playlist_index,
+        )
         progress = self._copy_progress(task.progress)
         progress.playlist_current_index = playlist_index
-        progress.playlist_last_index = playlist_index
         progress.percent = None
         progress.status_text = f"Retrying playlist item {playlist_index}"
-        output_tail, return_code, output_path, progress = await self._execute_download(task, request, progress)
+        output_tail, return_code, output_path, progress = await self._execute_with_youtube_fallback(
+            task,
+            request,
+            progress,
+            fallback_status=f"Downloaded playlist item {playlist_index} at 360p after YouTube rejected the selected format",
+        )
         if self.storage.get_task(task.id).status == "cancelled":
             return
 
@@ -196,15 +288,18 @@ class TaskManager:
         failures = dict(progress.playlist_failures)
         failures.pop(str(playlist_index), None)
         if return_code == 0:
+            completed_indexes = set(progress.playlist_completed_indexes)
+            completed_indexes.add(playlist_index)
             progress.playlist_failed_indexes = failed_indexes
+            progress.playlist_completed_indexes = sorted(completed_indexes)
             progress.playlist_failures = failures
             progress.playlist_current_index = None
-            progress.playlist_last_index = max(progress.playlist_last_index or playlist_index, playlist_index)
-            progress.percent = 100.0
+            progress.percent = len(completed_indexes) / len(entries) * 100
             remaining_failures = bool(progress.playlist_failed_indexes)
+            all_completed = all(entry.index in completed_indexes for entry in entries)
             updated = self.storage.update_task(
                 task.id,
-                status="failed" if remaining_failures else "completed",
+                status="completed" if all_completed and not remaining_failures else ("failed" if remaining_failures else "interrupted"),
                 progress=progress,
                 output_path=output_path or task.output_path,
                 error=None if not remaining_failures else task.error,
@@ -216,6 +311,7 @@ class TaskManager:
 
         if playlist_index not in progress.playlist_failed_indexes:
             progress.playlist_failed_indexes = [*progress.playlist_failed_indexes, playlist_index]
+        progress.playlist_completed_indexes = [index for index in progress.playlist_completed_indexes if index != playlist_index]
         failures[str(playlist_index)] = "\n".join(output_tail[-8:]) or f"yt-dlp exited with code {return_code}"
         progress.playlist_failures = failures
         progress.playlist_current_index = None
@@ -228,8 +324,41 @@ class TaskManager:
         )
         await self._publish("task_retry_failed", failed)
 
-    async def _execute_download(self, task: TaskResponse, request: CreateTaskRequest, progress: TaskProgress) -> tuple[list[str], int, str | None, TaskProgress]:
-        if not request.cookie_file:
+    async def _execute_with_youtube_fallback(
+        self,
+        task: TaskResponse,
+        request: CreateTaskRequest,
+        progress: TaskProgress,
+        fallback_status: str = "Downloaded at 360p after YouTube rejected the selected format",
+    ) -> tuple[list[str], int, str | None, TaskProgress]:
+        output, return_code, output_path, progress = await self._execute_download(task, request, progress)
+        error = next((line for line in reversed(output) if "ERROR:" in line), None)
+        if not error or "HTTP Error 403" not in error or "youtube.com" not in request.url:
+            return output, return_code, output_path, progress
+
+        fallback_request = request.model_copy(deep=True)
+        fallback_request.format_id = "18"
+        fallback_request.cookie_file = None
+        progress.status_text = "YouTube blocked the selected format; retrying at 360p"
+        fallback_output, fallback_code, fallback_path, progress = await self._execute_download(
+            task, fallback_request, progress, use_cookies=False
+        )
+        output.extend(fallback_output)
+        fallback_error = next((line for line in reversed(fallback_output) if "ERROR:" in line), None)
+        if fallback_code == 0 and fallback_error is None:
+            progress.status_text = fallback_status
+            return output, 0, fallback_path, progress
+        return output, fallback_code, fallback_path, progress
+
+    async def _execute_download(
+        self,
+        task: TaskResponse,
+        request: CreateTaskRequest,
+        progress: TaskProgress,
+        *,
+        use_cookies: bool = True,
+    ) -> tuple[list[str], int, str | None, TaskProgress]:
+        if use_cookies and not request.cookie_file:
             cookie_file = cookie_file_for_url(self.config.config_dir, request.url)
             if cookie_file is not None:
                 request.cookie_file = str(cookie_file)
@@ -237,7 +366,12 @@ class TaskManager:
         started = self.storage.update_task(task.id, status="running", progress=progress, started_at=utc_now())
         await self._publish("task_started", started)
 
-        cmd = build_download_command(request, self.config.download_dir)
+        is_playlist_item = bool(task.options.get("playlist_entries"))
+        cmd = build_download_command(
+            request,
+            self.config.download_dir,
+            single_item_directory=not is_playlist_item,
+        )
         process_kwargs: dict[str, Any] = {}
         process_env = os.environ.copy()
         process_env.setdefault("PYTHONIOENCODING", "utf-8")

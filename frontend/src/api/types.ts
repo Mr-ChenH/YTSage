@@ -111,6 +111,7 @@ export interface TaskProgress {
   playlist_last_index?: number | null;
   playlist_total?: number | null;
   playlist_failed_indexes?: number[];
+  playlist_completed_indexes?: number[];
   playlist_failures?: Record<string, string>;
 }
 

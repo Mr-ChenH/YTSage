@@ -8,6 +8,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "artplayer": "^5.4.0",
+    "lucide-react": "^0.468.0",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
