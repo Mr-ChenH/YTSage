@@ -57,6 +57,51 @@ async def test_single_youtube_video_retries_403_with_android_format() -> None:
 
 
 @pytest.mark.anyio
+async def test_successful_download_with_error_log_does_not_trigger_fallback() -> None:
+    task = _task([])
+    request = CreateTaskRequest(url="https://www.youtube.com/watch?v=video", format_id="399")
+    manager = TaskManager(Mock(), Mock())
+    manager._execute_download = AsyncMock(
+        return_value=(["ERROR: transient HTTP Error 403: Forbidden", "[download] 100%"], 0, "/downloads/video.mp4", TaskProgress())
+    )
+
+    _, return_code, output_path, _ = await manager._execute_with_youtube_fallback(task, request, TaskProgress())
+
+    assert return_code == 0
+    assert output_path == "/downloads/video.mp4"
+    assert manager._execute_download.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_playlist_item_with_transient_error_and_zero_exit_is_completed() -> None:
+    entry = PlaylistEntry(index=2, url="https://www.youtube.com/watch?v=video-2")
+    task = _task([entry])
+    stored_task = task.model_copy(update={"status": "running"})
+    manager = TaskManager(Mock(), Mock())
+
+    def update_task(_task_id: str, **fields: object) -> TaskResponse:
+        nonlocal stored_task
+        stored_task = stored_task.model_copy(update=fields)
+        return stored_task
+
+    manager.storage.get_task.side_effect = lambda _task_id: stored_task
+    manager.storage.update_task.side_effect = update_task
+    manager._publish = AsyncMock()
+    manager._execute_with_youtube_fallback = AsyncMock(
+        return_value=(["ERROR: transient fragment failure", "[download] 100%"], 0, "/downloads/video-2.mp4", TaskProgress(status_text="ERROR: transient fragment failure"))
+    )
+
+    _, return_code, _, progress = await manager._execute_playlist_entries(
+        task, CreateTaskRequest(**task.options), [entry], TaskProgress()
+    )
+
+    assert return_code == 0
+    assert progress.playlist_failed_indexes == []
+    assert progress.playlist_completed_indexes == [2]
+    assert progress.status_text == "Downloaded playlist item 1 of 1"
+
+
+@pytest.mark.anyio
 async def test_single_selected_playlist_entry_uses_entry_url() -> None:
     entry = PlaylistEntry(index=4, url="https://www.youtube.com/watch?v=video-4")
     task = _task([entry])

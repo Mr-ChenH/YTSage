@@ -128,14 +128,6 @@ def parse_progress_line(line: str, current: TaskProgress | None = None) -> TaskP
 
     error = _ERROR_RE.search(stripped)
     if error:
-        failed_indexes = list(progress.playlist_failed_indexes)
-        if progress.playlist_current_index is not None and progress.playlist_current_index not in failed_indexes:
-            failed_indexes.append(progress.playlist_current_index)
-        progress.playlist_failed_indexes = failed_indexes
-        failures = dict(progress.playlist_failures)
-        if progress.playlist_current_index is not None:
-            failures[str(progress.playlist_current_index)] = error.group("message").strip()
-        progress.playlist_failures = failures
         progress.status_text = stripped
         return progress
 

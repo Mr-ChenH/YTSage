@@ -8,6 +8,16 @@ from ytsage.server.services.download_service import build_download_command, pars
 from ytsage.server.services.task_manager import _playlist_item_filename_template
 
 
+def test_progress_error_does_not_finalize_playlist_failure() -> None:
+    current = TaskProgress(playlist_current_index=3)
+
+    progress = parse_progress_line("ERROR: transient fragment request failed", current)
+
+    assert progress.status_text == "ERROR: transient fragment request failed"
+    assert progress.playlist_failed_indexes == []
+    assert progress.playlist_failures == {}
+
+
 def test_progress_line_extracts_download_speed_and_eta() -> None:
     progress = parse_progress_line("[download]   5.8% of   44.96MiB at  119.52KiB/s ETA 02:26")
 

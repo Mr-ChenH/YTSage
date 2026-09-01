@@ -228,7 +228,7 @@ class TaskManager:
                 progress,
                 fallback_status=f"Downloaded playlist item {position} at 360p after YouTube rejected the selected format",
             )
-            item_error = next((line for line in reversed(output) if "ERROR:" in line), None) if return_code != 0 else None
+            item_error = next((line for line in reversed(output) if "ERROR:" in line), None)
             all_output.extend(output)
             all_output = all_output[-20:]
             if output_path:
@@ -236,7 +236,7 @@ class TaskManager:
             failures = dict(progress.playlist_failures)
             failed_indexes = list(progress.playlist_failed_indexes)
             completed_indexes = list(progress.playlist_completed_indexes)
-            if return_code != 0 or item_error:
+            if return_code != 0:
                 completed_indexes = [index for index in completed_indexes if index != entry.index]
                 if entry.index not in failed_indexes:
                     failed_indexes.append(entry.index)
@@ -246,6 +246,8 @@ class TaskManager:
                 failures.pop(str(entry.index), None)
                 if entry.index not in completed_indexes:
                     completed_indexes.append(entry.index)
+                if not progress.status_text or progress.status_text.startswith("ERROR:"):
+                    progress.status_text = f"Downloaded playlist item {position} of {len(entries)}"
             progress.playlist_failed_indexes = failed_indexes
             progress.playlist_completed_indexes = sorted(completed_indexes)
             progress.playlist_failures = failures
@@ -333,7 +335,7 @@ class TaskManager:
     ) -> tuple[list[str], int, str | None, TaskProgress]:
         output, return_code, output_path, progress = await self._execute_download(task, request, progress)
         error = next((line for line in reversed(output) if "ERROR:" in line), None)
-        if not error or "HTTP Error 403" not in error or "youtube.com" not in request.url:
+        if return_code == 0 or not error or "HTTP Error 403" not in error or "youtube.com" not in request.url:
             return output, return_code, output_path, progress
 
         fallback_request = request.model_copy(deep=True)
@@ -344,8 +346,7 @@ class TaskManager:
             task, fallback_request, progress, use_cookies=False
         )
         output.extend(fallback_output)
-        fallback_error = next((line for line in reversed(fallback_output) if "ERROR:" in line), None)
-        if fallback_code == 0 and fallback_error is None:
+        if fallback_code == 0:
             progress.status_text = fallback_status
             return output, 0, fallback_path, progress
         return output, fallback_code, fallback_path, progress
