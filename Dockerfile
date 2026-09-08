@@ -12,7 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YTSAGE_PORT=8080 \
     YTSAGE_CONFIG_DIR=/config \
     YTSAGE_DOWNLOAD_DIR=/downloads \
-    YTSAGE_QUEUE_CONCURRENCY=2
+    YTSAGE_QUEUE_CONCURRENCY=2 \
+    YTSAGE_AUTO_INSTALL_DEPS=0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu unzip \
@@ -25,7 +26,8 @@ COPY pyproject.toml README.md LICENSE ./
 COPY ytsage ./ytsage
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=ui /app/frontend/dist ./ytsage/server/static
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-compile . \
+    && find /usr/local/lib/python3.12/site-packages -type d -name '__pycache__' -prune -exec rm -rf {} +
 
 RUN useradd --create-home --uid 10001 ytsage \
     && mkdir -p /config /downloads \

@@ -3,9 +3,23 @@ from unittest.mock import Mock, patch
 
 from ytsage.server.models import CreateTaskRequest, PlaylistEntry, TaskProgress
 from ytsage.server.services.analyzer import _bilibili_collection_from_api
-from ytsage.server.services.dependencies import ytdlp_base_command
+from ytsage.server.services.dependencies import update_runtime_dependencies, ytdlp_base_command
 from ytsage.server.services.download_service import build_download_command, parse_progress_line
 from ytsage.server.services.task_manager import _playlist_item_filename_template
+
+
+def test_dependency_update_does_not_install_bundled_ffmpeg_when_system_ffmpeg_exists() -> None:
+    system_ffmpeg = Mock(version="6.1", source="cli")
+    with (
+        patch("ytsage.server.services.dependencies.get_ffmpeg_info", return_value=system_ffmpeg),
+        patch("ytsage.server.services.dependencies.get_ytdlp_info", return_value=Mock(version="2026.1")),
+        patch("ytsage.server.services.dependencies._pip_install", return_value=True) as install,
+    ):
+        result = update_runtime_dependencies()
+
+    assert result["ffmpeg"] == "system-managed"
+    assert result["ffmpeg_version"] == "6.1"
+    assert install.call_args_list == [(("yt-dlp --upgrade",), {"timeout": 240})]
 
 
 def test_progress_error_does_not_finalize_playlist_failure() -> None:

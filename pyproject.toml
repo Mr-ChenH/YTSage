@@ -14,7 +14,6 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0.0",
     "yt-dlp>=2024.1.0",
-    "imageio-ffmpeg>=0.5.1",
     "requests>=2.32.5",
     "packaging>=25.0",
     "loguru>=0.7.3",
@@ -23,6 +22,7 @@ dependencies = [
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
 license = "MIT"
+
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python :: 3",
@@ -40,6 +40,9 @@ classifiers = [
 ]
 
 keywords = ["youtube", "downloader", "video", "audio", "yt-dlp", "FastAPI", "Docker", "web-ui"]
+
+[project.optional-dependencies]
+ffmpeg-fallback = ["imageio-ffmpeg>=0.5.1"]
 
 
 [project.scripts]

@@ -38,7 +38,11 @@ def update_runtime_dependencies() -> dict[str, str]:
     """Upgrade managed runtime dependencies and refresh cached command info."""
     results: dict[str, str] = {}
     results["yt_dlp"] = "updated" if _pip_install("yt-dlp --upgrade", timeout=240) else "failed"
-    results["ffmpeg"] = "updated" if _pip_install("imageio-ffmpeg --upgrade", timeout=300) else "failed"
+    current_ffmpeg = get_ffmpeg_info()
+    if current_ffmpeg is not None and current_ffmpeg.source == "cli":
+        results["ffmpeg"] = "system-managed"
+    else:
+        results["ffmpeg"] = "updated" if _pip_install("imageio-ffmpeg --upgrade", timeout=300) else "failed"
     clear_dependency_cache()
     ytdlp = get_ytdlp_info()
     ffmpeg = get_ffmpeg_info()
