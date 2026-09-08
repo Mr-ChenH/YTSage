@@ -8,11 +8,23 @@ function warningText(analysis: AnalyzeResponse, t: T): string | null {
   return code === 'metadata_without_formats' ? t('metadataWithoutFormats') : code;
 }
 
+function cookieAnalysisStatus(analysis: AnalyzeResponse, field: string, t: T): { text: string; error: boolean } | null {
+  const status = rawText(analysis, field);
+  if (!status) return null;
+  const labels: Record<string, Parameters<T>[0]> = field === 'cookie_login_status'
+    ? { valid: 'cookieLoginValid', invalid: 'cookieLoginInvalid', unknown: 'cookieLoginUnknown' }
+    : { valid: 'cookieExpiryValid', session: 'cookieSession', expiring: 'cookieExpiring', expired: 'cookieExpired', invalid: 'cookieInvalid' };
+  const key = labels[status];
+  return key ? { text: t(key), error: status === 'invalid' || status === 'expired' } : null;
+}
+
 export function AnalysisSummary({ analysis, t }: { analysis: AnalyzeResponse | null; t: T }) {
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   useEffect(() => setThumbnailFailed(false), [analysis?.thumbnail_url]);
   if (!analysis) return <div className="empty-state">{t('analyzeEmpty')}</div>;
   const warning = warningText(analysis, t);
+  const cookieExpiry = cookieAnalysisStatus(analysis, 'cookie_expiry_status', t);
+  const cookieLogin = cookieAnalysisStatus(analysis, 'cookie_login_status', t);
   const webpageUrl = rawText(analysis, 'webpage_url');
   const originalUrl = rawText(analysis, 'original_url');
   const extractor = rawText(analysis, 'extractor') || rawText(analysis, 'extractor_key');
@@ -22,7 +34,7 @@ export function AnalysisSummary({ analysis, t }: { analysis: AnalyzeResponse | n
     <div className="stack">
       <h2>{analysis.title || t('untitled')}</h2>
       <span className="muted">{analysis.channel || t('unknownChannel')} {analysis.duration ? `- ${Math.round(analysis.duration / 60)} ${t('minutes')}` : ''}</span>
-      <div className="badge-row"><span className={`badge ${warning ? 'amber' : 'green'}`}>{warning ? t('fallbackFormats') : t('formatsReady')}</span><span className="badge blue">{t('subtitles')}: {analysis.subtitles.length}</span>{analysis.is_playlist && <span className="badge amber">{t('playlist')}: {analysis.playlist_count}</span>}{extractor && <span className="badge">{t('extractor')}: {extractor}</span>}</div>
+      <div className="badge-row"><span className={`badge ${warning ? 'amber' : 'green'}`}>{warning ? t('fallbackFormats') : t('formatsReady')}</span>{cookieExpiry && <span className={`badge ${cookieExpiry.error ? 'red' : 'green'}`}>{cookieExpiry.text}</span>}{cookieLogin && <span className={`badge ${cookieLogin.error ? 'red' : cookieLogin.text === t('cookieLoginUnknown') ? 'amber' : 'green'}`}>{cookieLogin.text}</span>}<span className="badge blue">{t('subtitles')}: {analysis.subtitles.length}</span>{analysis.is_playlist && <span className="badge amber">{t('playlist')}: {analysis.playlist_count}</span>}{extractor && <span className="badge">{t('extractor')}: {extractor}</span>}</div>
       {warning && <p className="notice-line"><strong>{t('analyzeWarning')}:</strong> {warning}</p>}
       <div className="meta-grid">{webpageUrl && <a href={webpageUrl} target="_blank" rel="noreferrer"><span>{t('sourcePage')}</span><strong>{webpageUrl}</strong></a>}{originalUrl && originalUrl !== webpageUrl && <a href={originalUrl} target="_blank" rel="noreferrer"><span>{t('originalUrl')}</span><strong>{originalUrl}</strong></a>}</div>
     </div>

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from ..config import ServerConfig
 from ..models import CookieSaveRequest, CookieSaveResponse, DependencyUpdateResponse, FilenameTemplateSaveRequest, HealthResponse, SettingsResponse
-from ..services.cookies import configured_cookie_profiles, cookie_file_path, normalize_cookie_profile, normalize_cookies
+from ..services.cookies import clear_cookie_login_status, configured_cookie_profiles, cookie_file_path, cookie_profile_status, cookie_profile_statuses, normalize_cookie_profile, normalize_cookies
 from ..services.dependencies import ffmpeg_version, update_runtime_dependencies, ytdlp_version
 from ..services.settings import default_video_resolution, filename_template, save_default_video_resolution, save_filename_template
 
@@ -30,7 +30,8 @@ def create_system_router(config: ServerConfig, auth_dependency: AuthDependency) 
 
     def settings_response() -> SettingsResponse:
         profiles = configured_cookie_profiles(config.config_dir)
-        return SettingsResponse(download_dir=str(config.download_dir), config_dir=str(config.config_dir), queue_concurrency=config.queue_concurrency, auth_configured=bool(config.auth_token), cookies_configured=any(profiles.values()), cookie_profiles=profiles, filename_template=filename_template(config.config_dir), default_video_resolution=default_video_resolution(config.config_dir))
+        profile_status = cookie_profile_statuses(config.config_dir)
+        return SettingsResponse(download_dir=str(config.download_dir), config_dir=str(config.config_dir), queue_concurrency=config.queue_concurrency, auth_configured=bool(config.auth_token), cookies_configured=any(profiles.values()), cookie_profiles=profiles, cookie_profile_status=profile_status, filename_template=filename_template(config.config_dir), default_video_resolution=default_video_resolution(config.config_dir))
 
     @router.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -51,11 +52,13 @@ def create_system_router(config: ServerConfig, auth_dependency: AuthDependency) 
         profile = normalize_cookie_profile(request.profile)
         normalized = normalize_cookies(request.content)
         target = cookie_file_path(config.config_dir, profile)
+        clear_cookie_login_status(config.config_dir, profile)
         if normalized is None:
             target.unlink(missing_ok=True)
-            return CookieSaveResponse(cookies_configured=False, profile=profile)
+            return CookieSaveResponse(cookies_configured=False, profile=profile, status=cookie_profile_status(target))
         target.write_text(normalized, encoding="utf-8")
-        return CookieSaveResponse(cookies_configured=True, profile=profile)
+        saved_status = cookie_profile_status(target)
+        return CookieSaveResponse(cookies_configured=saved_status.usable, profile=profile, status=saved_status)
 
     @router.post("/settings/filename-template", response_model=SettingsResponse)
     def save_template(request: FilenameTemplateSaveRequest) -> SettingsResponse:

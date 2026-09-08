@@ -190,9 +190,27 @@ class CookieSaveRequest(BaseModel):
     profile: str = "default"
 
 
+CookieState = Literal["not_configured", "valid", "session", "expiring", "expired", "invalid"]
+CookieLoginState = Literal["valid", "invalid", "unknown"]
+
+
+class CookieProfileStatus(BaseModel):
+    state: CookieState
+    configured: bool
+    usable: bool
+    total_count: int = 0
+    valid_count: int = 0
+    expired_count: int = 0
+    session_count: int = 0
+    earliest_expiry: int | None = None
+    login_state: CookieLoginState | None = None
+    login_checked_at: int | None = None
+
+
 class CookieSaveResponse(BaseModel):
     cookies_configured: bool
     profile: str = "default"
+    status: CookieProfileStatus | None = None
 
 
 class FilenameTemplateSaveRequest(BaseModel):
@@ -207,6 +225,7 @@ class SettingsResponse(BaseModel):
     auth_configured: bool
     cookies_configured: bool = False
     cookie_profiles: dict[str, bool] = Field(default_factory=dict)
+    cookie_profile_status: dict[str, CookieProfileStatus] = Field(default_factory=dict)
     filename_template: str
     default_video_resolution: str = "best"
 

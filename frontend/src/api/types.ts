@@ -19,6 +19,22 @@ export interface DependencyUpdateResponse {
   ffmpeg_version?: string | null;
 }
 
+export type CookieState = 'not_configured' | 'valid' | 'session' | 'expiring' | 'expired' | 'invalid';
+export type CookieLoginState = 'valid' | 'invalid' | 'unknown';
+
+export interface CookieProfileStatus {
+  state: CookieState;
+  configured: boolean;
+  usable: boolean;
+  total_count: number;
+  valid_count: number;
+  expired_count: number;
+  session_count: number;
+  earliest_expiry?: number | null;
+  login_state?: CookieLoginState | null;
+  login_checked_at?: number | null;
+}
+
 export interface SettingsResponse {
   download_dir: string;
   config_dir: string;
@@ -26,6 +42,7 @@ export interface SettingsResponse {
   auth_configured: boolean;
   cookies_configured: boolean;
   cookie_profiles: Record<string, boolean>;
+  cookie_profile_status: Record<string, CookieProfileStatus>;
   filename_template: string;
   default_video_resolution: string;
 }
@@ -33,6 +50,7 @@ export interface SettingsResponse {
 export interface CookieSaveResponse {
   cookies_configured: boolean;
   profile: string;
+  status?: CookieProfileStatus | null;
 }
 
 export interface FormatInfo {

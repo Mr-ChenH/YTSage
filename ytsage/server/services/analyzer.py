@@ -12,7 +12,7 @@ from fastapi import HTTPException, status
 
 from ..analyzers import bilibili
 from ..models import AnalyzeRequest, AnalyzeResponse, FormatInfo, PlaylistEntry, SubtitleInfo
-from .cookies import cookie_file_for_url
+from .cookies import cookie_file_for_url, cookie_file_path, cookie_profile_for_url, cookie_profile_status, save_cookie_login_status, youtube_login_cookies_present
 from .dependencies import ytdlp_base_command
 
 
@@ -144,8 +144,10 @@ def _subtitles_from(data: dict[str, Any]) -> list[SubtitleInfo]:
 
 
 def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None = None) -> AnalyzeResponse:
-    cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--no-warnings", "--skip-download"]
+    cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--skip-download"]
     cookie_file = cookie_file_for_url(config_dir, request.url) if config_dir is not None else None
+    requested_profile = cookie_profile_for_url(request.url)
+    requested_cookie_status = cookie_profile_status(cookie_file_path(config_dir, requested_profile)) if config_dir is not None else None
     if cookie_file is not None:
         cmd.extend(["--cookies", str(cookie_file)])
     if request.generic_mode:
@@ -166,6 +168,28 @@ def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None 
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="yt-dlp returned invalid JSON") from exc
 
     raw: dict[str, Any] = {key: _as_str(data.get(key)) for key in ("extractor", "extractor_key", "webpage_url", "original_url", "display_id")}
+    if cookie_file is not None and config_dir is not None:
+        actual_profile = next(
+            (profile for profile in ("default", "bilibili", "youtube") if cookie_file_path(config_dir, profile) == cookie_file),
+            requested_profile,
+        )
+        actual_status = cookie_profile_status(cookie_file)
+        raw["cookie_profile"] = actual_profile
+        raw["cookie_expiry_status"] = actual_status.state
+        raw["cookie_status"] = "verified_for_url" if actual_profile == requested_profile else "fallback_verified"
+        if actual_profile == "bilibili":
+            raw["cookie_login_status"] = bilibili.validate_cookie_login(cookie_file, min(timeout, 10), requests)
+        elif actual_profile == "youtube":
+            rotated = "cookies are no longer valid" in result.stderr.lower()
+            raw["cookie_login_status"] = "invalid" if rotated or not youtube_login_cookies_present(cookie_file) else "valid"
+        else:
+            raw["cookie_login_status"] = "unknown"
+        save_cookie_login_status(config_dir, actual_profile, raw["cookie_login_status"])
+    elif requested_cookie_status is not None and requested_cookie_status.configured:
+        raw["cookie_profile"] = requested_profile
+        raw["cookie_expiry_status"] = requested_cookie_status.state
+        raw["cookie_login_status"] = "invalid" if requested_cookie_status.state in {"expired", "invalid"} else "unknown"
+        raw["cookie_status"] = requested_cookie_status.state
     entries = data.get("entries")
     entry_items = _as_dict_list(entries)
     is_playlist = isinstance(entries, list)

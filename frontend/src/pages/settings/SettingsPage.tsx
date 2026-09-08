@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { ApiClient } from '../../api/client';
-import type { SettingsResponse } from '../../api/types';
+import type { CookieProfileStatus, SettingsResponse } from '../../api/types';
 import { filenameTemplatePresets, videoResolutionOptions } from '../../config/download';
 import type { T, TKey } from '../../i18n';
 
@@ -26,6 +26,29 @@ function cookieProfileLabel(profile: string, t: T): string {
   return labels[profile] ? t(labels[profile]) : profile;
 }
 
+function cookieStatusLabel(status: CookieProfileStatus | undefined, t: T): string {
+  if (!status) return t('notConfigured');
+  const labels: Record<CookieProfileStatus['state'], TKey> = {
+    not_configured: 'notConfigured',
+    valid: 'cookieValid',
+    session: 'cookieSession',
+    expiring: 'cookieExpiring',
+    expired: 'cookieExpired',
+    invalid: 'cookieInvalid',
+  };
+  const expiryLabel = status.earliest_expiry
+    ? `${t(labels[status.state])} (${new Date(status.earliest_expiry * 1000).toLocaleString()})`
+    : t(labels[status.state]);
+  if (!status.configured) return expiryLabel;
+  const loginLabels: Record<NonNullable<CookieProfileStatus['login_state']>, TKey> = {
+    valid: 'cookieLoginValid',
+    invalid: 'cookieLoginInvalid',
+    unknown: 'cookieLoginUnknown',
+  };
+  const loginLabel = status.login_state ? t(loginLabels[status.login_state]) : t('cookieLoginNotChecked');
+  return `${expiryLabel} · ${loginLabel}`;
+}
+
 export function SettingsPage({ api, settings, token, t, onToken, onSaved }: SettingsPageProps) {
   const [cookieContent, setCookieContent] = useState('');
   const [cookieProfile, setCookieProfile] = useState('default');
@@ -46,7 +69,7 @@ export function SettingsPage({ api, settings, token, t, onToken, onSaved }: Sett
     try {
       const result = await api.saveCookies(content, cookieProfile);
       setCookieContent('');
-      setCookieStatus(`${cookieProfileLabel(result.profile, t)}: ${result.cookies_configured ? t('cookiesSaved') : t('cookiesCleared')}`);
+      setCookieStatus(`${cookieProfileLabel(result.profile, t)}: ${result.status ? cookieStatusLabel(result.status, t) : (result.cookies_configured ? t('cookiesSaved') : t('cookiesCleared'))}`);
       onSaved();
     } catch (err) {
       setCookieStatus(err instanceof Error ? err.message : String(err));
@@ -86,13 +109,13 @@ export function SettingsPage({ api, settings, token, t, onToken, onSaved }: Sett
     <label>{t('queueConcurrency')}{readonlyValue(String(settings?.queue_concurrency || 2))}</label>
     <label>{t('authConfigured')}{readonlyValue(settings?.auth_configured ? t('yes') : t('no'))}</label>
     <label>{t('optionalAuthToken')}<input value={token} placeholder={t('notConfigured')} onChange={(event) => onToken(event.target.value)} /></label>
-    <label>{t('cookiesConfigured')}{readonlyValue(['default', 'bilibili', 'youtube'].map((profile) => `${cookieProfileLabel(profile, t)}: ${settings?.cookie_profiles?.[profile] ? t('configured') : t('notConfigured')}`).join(' / '))}</label>
+    <label>{t('cookiesConfigured')}{readonlyValue(['default', 'bilibili', 'youtube'].map((profile) => `${cookieProfileLabel(profile, t)}: ${cookieStatusLabel(settings?.cookie_profile_status?.[profile], t)}`).join(' / '))}</label>
     <label>{t('cookieProfile')}<select value={cookieProfile} onChange={(event) => setCookieProfile(event.target.value)}>{['default', 'bilibili', 'youtube'].map((profile) => <option key={profile} value={profile}>{cookieProfileLabel(profile, t)}</option>)}</select></label>
     <label className="wide-field">{t('cookiePaste')}<textarea className="cookie-textarea" value={cookieContent} placeholder={t('cookiePastePlaceholder')} onChange={(event) => setCookieContent(event.target.value)} /></label>
     <div className="wide-field toolbar">
       <label className="file-button"><input type="file" accept=".txt,.cookies" onChange={(event) => void loadCookieFile(event.target.files?.[0])} />{t('uploadCookieFile')}</label>
       <button className="primary" onClick={() => void saveCookies(cookieContent)} disabled={busy || !cookieContent.trim()}>{busy ? t('working') : t('saveCookies')}</button>
-      <button onClick={() => void saveCookies('')} disabled={busy || !settings?.cookie_profiles?.[cookieProfile]}>{t('clearCookies')}</button>
+      <button onClick={() => void saveCookies('')} disabled={busy || !settings?.cookie_profile_status?.[cookieProfile]?.configured}>{t('clearCookies')}</button>
       {cookieStatus && <span className="muted">{cookieStatus}</span>}
     </div>
   </div></div>;

@@ -10,6 +10,7 @@ import { SettingsPage } from '../pages/settings/SettingsPage';
 import { SystemPage } from '../pages/system/SystemPage';
 import { TasksPage } from '../pages/tasks/TasksPage';
 import { WorkspacePage } from '../pages/workspace/WorkspacePage';
+import { initialWorkspaceState } from '../pages/workspace/workspaceState';
 import { navItems, type Page } from './navigation';
 import { TopBar } from './TopBar';
 
@@ -28,6 +29,7 @@ export function App() {
   const [token, setToken] = useState(() => localStorage.getItem('ytsage.authToken') || '');
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
+  const [workspaceState, setWorkspaceState] = useState(initialWorkspaceState);
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [fileLibrary, setFileLibrary] = useState<FileListResponse | null>(null);
@@ -155,7 +157,7 @@ export function App() {
     </aside>
     <main className="main">
       <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={refreshCurrentPage} error={error} />
-      {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
+      {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} state={workspaceState} onState={setWorkspaceState} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'tasks' && <TasksPage tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
       {page === 'monitors' && <MonitorsPage api={api} t={t} />}
       {page === 'history' && <HistoryPage entries={history} api={api} t={t} onChanged={loadHistory} onOpenFiles={openFilesPage} />}

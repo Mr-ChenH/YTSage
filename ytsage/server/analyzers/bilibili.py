@@ -183,6 +183,25 @@ def entries_from_season(season: Any) -> tuple[str | None, list[PlaylistEntry]]:
     return collection_title, entries
 
 
+def validate_cookie_login(cookie_file: Path, timeout: int = 10, http: HttpClient = requests) -> str:
+    try:
+        response = http.get(
+            "https://api.bilibili.com/x/web-interface/nav",
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"},
+            cookies=_load_cookie_jar(cookie_file),
+            timeout=timeout,
+        )
+    except requests.RequestException:
+        return "unknown"
+    if response.status_code >= 400:
+        return "unknown"
+    payload = _json_response(response)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return "unknown"
+    return "valid" if data.get("isLogin") is True else "invalid"
+
+
 def collection_from_api(url: str, cookie_file: Path | None = None, timeout: int = 15, http: HttpClient = requests) -> tuple[str | None, list[PlaylistEntry]]:
     bvid = _bvid_from_url(url)
     if not bvid:

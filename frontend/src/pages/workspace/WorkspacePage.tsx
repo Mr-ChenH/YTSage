@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ApiClient } from '../../api/client';
-import type { AnalyzeResponse, CreateTaskRequest, DownloadMode, SettingsResponse, TaskResponse } from '../../api/types';
+import type { CreateTaskRequest, DownloadMode, SettingsResponse, TaskResponse } from '../../api/types';
 import { filenameTemplatePresets } from '../../config/download';
 import type { T, TKey } from '../../i18n';
 import { AnalysisDetails } from './AnalysisDetails';
@@ -15,11 +15,14 @@ import {
   taskFilenameTemplate,
   toggleListItem,
 } from './workspaceUtils';
+import type { WorkspaceState } from './workspaceState';
 
 interface WorkspacePageProps {
   api: ApiClient;
   t: T;
   settings: SettingsResponse | null;
+  state: WorkspaceState;
+  onState: (state: WorkspaceState) => void;
   onTask: (task: TaskResponse) => void;
 }
 
@@ -32,22 +35,13 @@ function modeLabel(mode: DownloadMode, t: T): string {
   return t(labels[mode]);
 }
 
-export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) {
-  const [url, setUrl] = useState('');
-  const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
-  const [selectedFormat, setSelectedFormat] = useState<string | null>(null);
-  const [audioFormat, setAudioFormat] = useState('mp3');
-  const [videoOutputFormat, setVideoOutputFormat] = useState('mp4');
-  const [selectedSubtitleLangs, setSelectedSubtitleLangs] = useState<string[]>([]);
-  const [mergeSubtitles, setMergeSubtitles] = useState(true);
-  const [saveThumbnail, setSaveThumbnail] = useState(false);
-  const [saveDescription, setSaveDescription] = useState(false);
-  const [embedChapters, setEmbedChapters] = useState(true);
-  const [audioNormalization, setAudioNormalization] = useState(false);
-  const [proxyUrl, setProxyUrl] = useState('');
-  const [concurrentFragments, setConcurrentFragments] = useState(4);
-  const [selectedPlaylistIndexes, setSelectedPlaylistIndexes] = useState<number[]>([]);
-  const [mode, setMode] = useState<DownloadMode>('video');
+export function WorkspacePage({ api, t, settings, state, onState, onTask }: WorkspacePageProps) {
+  const {
+    url, analysis, selectedFormat, audioFormat, videoOutputFormat, selectedSubtitleLangs,
+    mergeSubtitles, saveThumbnail, saveDescription, embedChapters, audioNormalization,
+    proxyUrl, concurrentFragments, selectedPlaylistIndexes, mode,
+  } = state;
+  const update = (patch: Partial<WorkspaceState>) => onState({ ...state, ...patch });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,10 +50,12 @@ export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) 
     setError(null);
     try {
       const data = await api.analyze(url);
-      setAnalysis(data);
-      setSelectedFormat(preferredFormatForMode(data.formats, mode, settings?.default_video_resolution || 'best'));
-      setSelectedPlaylistIndexes(data.playlist_entries.map((entry) => entry.index));
-      setSelectedSubtitleLangs([]);
+      update({
+        analysis: data,
+        selectedFormat: preferredFormatForMode(data.formats, mode, settings?.default_video_resolution || 'best'),
+        selectedPlaylistIndexes: data.playlist_entries.map((entry) => entry.index),
+        selectedSubtitleLangs: [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -68,7 +64,7 @@ export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) 
   }
 
   useEffect(() => {
-    if (analysis) setSelectedFormat(preferredFormatForMode(analysis.formats, mode, settings?.default_video_resolution || 'best'));
+    if (analysis) update({ selectedFormat: preferredFormatForMode(analysis.formats, mode, settings?.default_video_resolution || 'best') });
   }, [mode, analysis, settings?.default_video_resolution]);
 
   function buildRequest(): CreateTaskRequest {
@@ -123,23 +119,23 @@ export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) 
     <div className="panel acrylic">
       <div className="panel-header"><h2>{t('analyzeUrl')}</h2>{analysis && <span className="badge blue">{analysis.formats.length} {t('formatsCount')}</span>}</div>
       <div className="panel-body">
-        <div className="urlbar"><input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={t('urlPlaceholder')} /><button onClick={() => navigator.clipboard?.readText().then(setUrl)}>{t('paste')}</button><button className="primary" onClick={analyze} disabled={!url || busy}>{busy ? t('working') : t('analyze')}</button></div>
+        <div className="urlbar"><input value={url} onChange={(event) => update({ url: event.target.value, analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] })} placeholder={t('urlPlaceholder')} /><button onClick={() => navigator.clipboard?.readText().then((value) => update({ url: value, analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] }))}>{t('paste')}</button><button className="primary" onClick={analyze} disabled={!url || busy}>{busy ? t('working') : t('analyze')}</button></div>
         {error && <p className="error-line">{error}</p>}
         <AnalysisSummary analysis={analysis} t={t} />
-        <AnalysisDetails analysis={analysis} mode={mode} selectedPlaylistIndexes={selectedPlaylistIndexes} selectedFormat={selectedFormat} onPlaylistSelected={setSelectedPlaylistIndexes} onFormatSelected={setSelectedFormat} t={t} />
+        <AnalysisDetails analysis={analysis} mode={mode} selectedPlaylistIndexes={selectedPlaylistIndexes} selectedFormat={selectedFormat} onPlaylistSelected={(value) => update({ selectedPlaylistIndexes: value })} onFormatSelected={(value) => update({ selectedFormat: value })} t={t} />
       </div>
     </div>
     <aside className="panel acrylic">
       <div className="panel-header"><h2>{t('downloadOptions')}</h2><span className="badge">{t('queued')}</span></div>
       <div className="panel-body options-grid">
-        <div className="segmented">{(['video', 'audio', 'subtitles'] as DownloadMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => setMode(item)}>{modeLabel(item, t)}</button>)}</div>
-        <label>{t('formatSelect')}<select value={selectedFormat || ''} onChange={(event) => setSelectedFormat(event.target.value || null)} disabled={mode === 'subtitles'}><option value="">{mode === 'audio' ? 'bestaudio' : t('autoBestFormat')}</option>{modeFormats(analysis?.formats || [], mode).map((format) => <option key={format.format_id} value={format.format_id}>{formatLabel(format)}</option>)}</select></label>
-        {mode === 'video' && <label>{t('videoOutputFormat')}<select value={videoOutputFormat} onChange={(event) => setVideoOutputFormat(event.target.value)}>{['mp4', 'webm', 'mkv'].map((format) => <option key={format} value={format}>{format}</option>)}</select></label>}
-        {mode === 'audio' && <label>{t('audioOutputFormat')}<select value={audioFormat} onChange={(event) => setAudioFormat(event.target.value)}>{['mp3', 'm4a', 'opus', 'flac', 'wav'].map((format) => <option key={format} value={format}>{format}</option>)}</select></label>}
-        {!!analysis?.subtitles.length && <div className="section-block compact-options"><div className="section-heading"><h3>{t('subtitleLanguages')}</h3><span className="badge blue">{selectedSubtitleLangs.length}</span></div><div className="check-grid">{analysis.subtitles.map((subtitle) => <label className="check" key={`${subtitle.language}-${subtitle.automatic ? 'auto' : 'manual'}`}><input type="checkbox" checked={selectedSubtitleLangs.includes(subtitle.language)} onChange={() => setSelectedSubtitleLangs((current) => toggleListItem(current, subtitle.language))} /> {subtitle.language}{subtitle.name ? ` - ${subtitle.name}` : ''}</label>)}</div></div>}
-        <div className="check-grid"><label className="check"><input type="checkbox" checked={mergeSubtitles} onChange={(event) => setMergeSubtitles(event.target.checked)} /> {t('mergeSubtitles')}</label><label className="check"><input type="checkbox" checked={saveThumbnail} onChange={(event) => setSaveThumbnail(event.target.checked)} /> {t('saveThumbnail')}</label><label className="check"><input type="checkbox" checked={saveDescription} onChange={(event) => setSaveDescription(event.target.checked)} /> {t('saveDescription')}</label><label className="check"><input type="checkbox" checked={embedChapters} onChange={(event) => setEmbedChapters(event.target.checked)} /> {t('embedChapters')}</label><label className="check"><input type="checkbox" checked={audioNormalization} onChange={(event) => setAudioNormalization(event.target.checked)} disabled={mode !== 'audio'} /> {t('normalizeAudio')}</label></div>
-        <label>{t('proxyUrl')}<input value={proxyUrl} placeholder={t('proxyPlaceholder')} onChange={(event) => setProxyUrl(event.target.value)} /></label>
-        <label>{t('concurrentFragments')}<input type="number" min="1" max="16" value={concurrentFragments} onChange={(event) => setConcurrentFragments(Math.max(1, Math.min(16, Number(event.target.value) || 1)))} /></label>
+        <div className="segmented">{(['video', 'audio', 'subtitles'] as DownloadMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => update({ mode: item })}>{modeLabel(item, t)}</button>)}</div>
+        <label>{t('formatSelect')}<select value={selectedFormat || ''} onChange={(event) => update({ selectedFormat: event.target.value || null })} disabled={mode === 'subtitles'}><option value="">{mode === 'audio' ? 'bestaudio' : t('autoBestFormat')}</option>{modeFormats(analysis?.formats || [], mode).map((format) => <option key={format.format_id} value={format.format_id}>{formatLabel(format)}</option>)}</select></label>
+        {mode === 'video' && <label>{t('videoOutputFormat')}<select value={videoOutputFormat} onChange={(event) => update({ videoOutputFormat: event.target.value })}>{['mp4', 'webm', 'mkv'].map((format) => <option key={format} value={format}>{format}</option>)}</select></label>}
+        {mode === 'audio' && <label>{t('audioOutputFormat')}<select value={audioFormat} onChange={(event) => update({ audioFormat: event.target.value })}>{['mp3', 'm4a', 'opus', 'flac', 'wav'].map((format) => <option key={format} value={format}>{format}</option>)}</select></label>}
+        {!!analysis?.subtitles.length && <div className="section-block compact-options"><div className="section-heading"><h3>{t('subtitleLanguages')}</h3><span className="badge blue">{selectedSubtitleLangs.length}</span></div><div className="check-grid">{analysis.subtitles.map((subtitle) => <label className="check" key={`${subtitle.language}-${subtitle.automatic ? 'auto' : 'manual'}`}><input type="checkbox" checked={selectedSubtitleLangs.includes(subtitle.language)} onChange={() => update({ selectedSubtitleLangs: toggleListItem(selectedSubtitleLangs, subtitle.language) })} /> {subtitle.language}{subtitle.name ? ` - ${subtitle.name}` : ''}</label>)}</div></div>}
+        <div className="check-grid"><label className="check"><input type="checkbox" checked={mergeSubtitles} onChange={(event) => update({ mergeSubtitles: event.target.checked })} /> {t('mergeSubtitles')}</label><label className="check"><input type="checkbox" checked={saveThumbnail} onChange={(event) => update({ saveThumbnail: event.target.checked })} /> {t('saveThumbnail')}</label><label className="check"><input type="checkbox" checked={saveDescription} onChange={(event) => update({ saveDescription: event.target.checked })} /> {t('saveDescription')}</label><label className="check"><input type="checkbox" checked={embedChapters} onChange={(event) => update({ embedChapters: event.target.checked })} /> {t('embedChapters')}</label><label className="check"><input type="checkbox" checked={audioNormalization} onChange={(event) => update({ audioNormalization: event.target.checked })} disabled={mode !== 'audio'} /> {t('normalizeAudio')}</label></div>
+        <label>{t('proxyUrl')}<input value={proxyUrl} placeholder={t('proxyPlaceholder')} onChange={(event) => update({ proxyUrl: event.target.value })} /></label>
+        <label>{t('concurrentFragments')}<input type="number" min="1" max="16" value={concurrentFragments} onChange={(event) => update({ concurrentFragments: Math.max(1, Math.min(16, Number(event.target.value) || 1)) })} /></label>
         <div className="toolbar"><button className="primary" onClick={createTask} disabled={!url || busy || Boolean(analysis?.is_playlist && selectedPlaylistIndexes.length === 0)}>{t('createTask')}</button><button onClick={createMonitor} disabled={!analysis?.is_playlist || busy}>{t('createMonitor')}</button></div>
       </div>
     </aside>
