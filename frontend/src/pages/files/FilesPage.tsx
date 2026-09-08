@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import type { FileEntry, FileListResponse } from '../../api/types';
 import type { T } from '../../i18n';
@@ -20,6 +20,7 @@ export function FilesPage({ library, token, api, t, onLoaded, onPlay }: FilesPag
   const [query, setQuery] = useState('');
   const [folder, setFolder] = useState('');
   const [mediaPage, setMediaPage] = useState(1);
+  const mediaTableRef = useRef<HTMLDivElement>(null);
   const mediaPageSize = 30;
   const mediaFiles = (library?.files || []).filter((file) => file.playable && (file.media_type === 'video' || file.media_type === 'audio') && directParent(file.relative_path) === folder);
   const mediaPages = Math.max(1, Math.ceil((library?.total || 0) / mediaPageSize));
@@ -42,6 +43,7 @@ export function FilesPage({ library, token, api, t, onLoaded, onPlay }: FilesPag
     const page = Math.min(mediaPages, Math.max(1, nextPage));
     setMediaPage(page);
     await load((page - 1) * mediaPageSize);
+    mediaTableRef.current?.scrollTo({ top: 0 });
   }
   async function removeFile(file: FileEntry) {
     if (!window.confirm(t('confirmDeleteFile').replace('{name}', file.name))) return;
@@ -77,7 +79,7 @@ export function FilesPage({ library, token, api, t, onLoaded, onPlay }: FilesPag
       <button className="danger" disabled={!folder} onClick={() => void removeFolder()}>{t('deleteFolder')}</button>
     </div></div><div className="panel-body media-table-body">
       {!mediaFiles.length && <div className="empty-state">{t('noFiles')}</div>}
-      {!!mediaFiles.length && <div className="media-table-wrap"><table className="media-table"><thead><tr><th>{t('title')}</th><th>{t('type')}</th><th>{t('size')}</th><th></th></tr></thead><tbody>{mediaFiles.map((file) => <tr key={file.id}><td><strong>{file.name}</strong></td><td><span className="badge green">{mediaLabel(file.media_type, t)}</span></td><td>{formatBytes(file.size)}</td><td><div className="toolbar compact-actions"><button onClick={() => onPlay(file, mediaFiles, folder)}>{t('play')}</button><a className="button-link" href={withAuthUrl(file.download_url, token)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(withAuthUrl(file.download_url, token))}>{t('copyLink')}</button><button className="danger" onClick={() => void removeFile(file)}>{t('deleteFile')}</button></div></td></tr>)}</tbody></table></div>}
+      {!!mediaFiles.length && <div className="media-table-wrap" ref={mediaTableRef}><table className="media-table"><thead><tr><th>{t('title')}</th><th>{t('type')}</th><th>{t('size')}</th><th></th></tr></thead><tbody>{mediaFiles.map((file) => <tr key={file.id}><td><strong>{file.name}</strong></td><td><span className="badge green">{mediaLabel(file.media_type, t)}</span></td><td>{formatBytes(file.size)}</td><td><div className="toolbar compact-actions"><button onClick={() => onPlay(file, mediaFiles, folder)}>{t('play')}</button><a className="button-link" href={withAuthUrl(file.download_url, token)}>{t('download')}</a><button onClick={() => navigator.clipboard?.writeText(withAuthUrl(file.download_url, token))}>{t('copyLink')}</button><button className="danger" onClick={() => void removeFile(file)}>{t('deleteFile')}</button></div></td></tr>)}</tbody></table></div>}
       <div className="pagination-row"><button onClick={() => void changeMediaPage(normalizedMediaPage - 1)} disabled={normalizedMediaPage <= 1}>{t('previousPage')}</button><span className="muted">{formatPageInfo(t('pageInfo'), normalizedMediaPage, mediaPages, library?.total || 0)}</span><div className="page-list" aria-label="Pagination">{mediaPageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`ellipsis-${index}`}>...</span> : <button className={item === normalizedMediaPage ? 'active' : ''} key={item} onClick={() => void changeMediaPage(item)} disabled={item === normalizedMediaPage} aria-current={item === normalizedMediaPage ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => void changeMediaPage(normalizedMediaPage + 1)} disabled={normalizedMediaPage >= mediaPages}>{t('nextPage')}</button></div>
     </div></section>
   </div>;

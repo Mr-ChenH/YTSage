@@ -183,12 +183,14 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 
 .file-browser-grid { margin: 0 !important; display: grid; grid-template-columns: 210px minmax(0,1fr); min-height: calc(100vh - 65px); }
 .file-tree-panel { padding: 16px 10px; border-right: 1px solid var(--line); background: var(--surface); }
-.file-media-panel { padding: 16px 20px; }
+.file-media-panel { height: calc(100vh - 65px); padding: 16px 20px; display: flex; flex-direction: column; overflow: hidden; }
 .file-tree-list { max-height: calc(100vh - 130px); overflow: auto; padding-top: 7px; }
 .tree-item { width: 100%; min-height: 30px; padding: 0 7px; justify-content: flex-start; border: 0; background: transparent; box-shadow: none; text-align: left; }
 .tree-item.active { color: var(--accent); background: var(--accent-soft); }
 .tree-indent { flex: 0 0 auto; }
-.file-media-panel > .panel-body { max-height: calc(100vh - 125px); overflow: auto; }
+.file-media-panel > .panel-body { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.file-media-panel .media-table-wrap { min-height: 0; flex: 1; overflow: auto; }
+.file-media-panel .pagination-row { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--content); }
 .media-table td:last-child { text-align: right; }
 .file-toolbar-inline input { width: min(240px,25vw); }
 .compact-actions { justify-content: flex-end; flex-wrap: nowrap; }
@@ -293,7 +295,9 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .file-browser-grid, .watch-layout { margin: 0 !important; grid-template-columns: 1fr; }
   .file-tree-panel { max-height: 175px; padding: 11px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .file-tree-list { max-height: 115px; }
-  .file-media-panel { padding: 12px; }
+  .file-media-panel { height: auto; padding: 12px; overflow: visible; }
+  .file-media-panel > .panel-body { display: block; overflow: visible; }
+  .file-media-panel .media-table-wrap { max-height: none; overflow: auto; }
   .file-media-panel > .panel-body, .watch-list-body { max-height: none; }
   .watch-list { min-height: 0; border-left: 0; border-top: 1px solid var(--line); }
   .watch-stage { padding: 0; }
