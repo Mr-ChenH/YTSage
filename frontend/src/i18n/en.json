@@ -89,7 +89,7 @@
   "embedChapters": "Embed chapters",
   "normalizeAudio": "Normalize audio",
   "createTask": "Create Download Task",
-  "createMonitor": "Monitor This Playlist",
+  "createMonitor": "Download and Monitor",
   "noMonitors": "No playlist monitors. Analyze a playlist in the download workspace to create one.",
   "monitorEnabled": "Monitoring",
   "monitorPaused": "Paused",

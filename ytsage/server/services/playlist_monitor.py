@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from typing import Callable
 
-from ..models import AnalyzeRequest, AnalyzeResponse, CreateTaskRequest, PlaylistEntry, PlaylistMonitorCreate, PlaylistMonitorResponse
+from ..models import AnalyzeRequest, AnalyzeResponse, CreateTaskRequest, PlaylistEntry, PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorResponse
 from .storage import Storage, utc_now
 from .task_manager import TaskManager
 
@@ -40,15 +40,44 @@ class PlaylistMonitorService:
         await asyncio.gather(self._runner, return_exceptions=True)
         self._runner = None
 
-    async def create(self, request: PlaylistMonitorCreate) -> PlaylistMonitorResponse:
+    async def create(self, request: PlaylistMonitorCreate) -> PlaylistMonitorCreateResponse:
+        analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=request.url))
+        if not analysis.is_playlist or not analysis.playlist_entries:
+            raise ValueError("URL did not resolve to a playlist or collection")
+
         normalized = request.model_copy(deep=True)
         normalized.download_options.url = request.url
+        initial_request = request.download_options.model_copy(deep=True)
+        initial_request.url = request.url
+        if not initial_request.playlist_entries:
+            initial_request.playlist_entries = analysis.playlist_entries
+        initial_request.playlist_items = None
         normalized.download_options.playlist_entries = []
         normalized.download_options.playlist_items = None
         monitor = self.storage.create_monitor(uuid.uuid4().hex, normalized)
-        await self.check_now(monitor.id)
+        task = None
+        try:
+            current_keys = [playlist_entry_key(entry) for entry in analysis.playlist_entries]
+            monitor = self.storage.schedule_next_monitor_check(
+                monitor.id,
+                monitor.interval_minutes,
+                title=analysis.title,
+                seen_entry_keys=current_keys,
+                last_checked_at=utc_now(),
+                last_error=None,
+            )
+            task = await self.task_manager.create_task(initial_request)
+            monitor = self.storage.update_monitor(monitor.id, last_task_id=task.id)
+        except Exception:
+            if task is not None:
+                try:
+                    await self.task_manager.delete_task(task.id)
+                except Exception:
+                    pass
+            self.storage.delete_monitor(monitor.id)
+            raise
         self._wake.set()
-        return self.storage.get_monitor(monitor.id)
+        return PlaylistMonitorCreateResponse(monitor=monitor, initial_task=task)
 
     def list(self) -> list[PlaylistMonitorResponse]:
         return self.storage.list_monitors()

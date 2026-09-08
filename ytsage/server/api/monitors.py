@@ -4,7 +4,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 
-from ..models import PlaylistMonitorCreate, PlaylistMonitorResponse, PlaylistMonitorUpdate
+from ..models import PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorResponse, PlaylistMonitorUpdate
 from ..services.playlist_monitor import PlaylistMonitorService
 
 AuthDependency = Callable[..., None]
@@ -17,8 +17,8 @@ def create_monitors_router(service: PlaylistMonitorService, auth_dependency: Aut
     def list_monitors() -> list[PlaylistMonitorResponse]:
         return service.list()
 
-    @router.post("", response_model=PlaylistMonitorResponse)
-    async def create_monitor(request: PlaylistMonitorCreate) -> PlaylistMonitorResponse:
+    @router.post("", response_model=PlaylistMonitorCreateResponse)
+    async def create_monitor(request: PlaylistMonitorCreate) -> PlaylistMonitorCreateResponse:
         try:
             return await service.create(request)
         except ValueError as exc:

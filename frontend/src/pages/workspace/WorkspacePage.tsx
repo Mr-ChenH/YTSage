@@ -21,7 +21,6 @@ interface WorkspacePageProps {
   t: T;
   settings: SettingsResponse | null;
   onTask: (task: TaskResponse) => void;
-  onMonitorCreated: () => void;
 }
 
 function modeLabel(mode: DownloadMode, t: T): string {
@@ -33,7 +32,7 @@ function modeLabel(mode: DownloadMode, t: T): string {
   return t(labels[mode]);
 }
 
-export function WorkspacePage({ api, t, settings, onTask, onMonitorCreated }: WorkspacePageProps) {
+export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) {
   const [url, setUrl] = useState('');
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<string | null>(null);
@@ -111,8 +110,8 @@ export function WorkspacePage({ api, t, settings, onTask, onMonitorCreated }: Wo
     setBusy(true);
     setError(null);
     try {
-      await api.createMonitor({ url, interval_minutes: 60, download_options: buildRequest() });
-      onMonitorCreated();
+      const result = await api.createMonitor({ url, interval_minutes: 60, download_options: buildRequest() });
+      onTask(result.initial_task);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

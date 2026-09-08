@@ -157,6 +157,11 @@ class PlaylistMonitorResponse(BaseModel):
     updated_at: str
 
 
+class PlaylistMonitorCreateResponse(BaseModel):
+    monitor: PlaylistMonitorResponse
+    initial_task: TaskResponse
+
+
 class FileEntry(BaseModel):
     id: str
     name: str

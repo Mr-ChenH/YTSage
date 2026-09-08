@@ -154,6 +154,11 @@ export interface PlaylistMonitorCreate {
   download_options: CreateTaskRequest;
 }
 
+export interface PlaylistMonitorCreateResponse {
+  monitor: PlaylistMonitorResponse;
+  initial_task: TaskResponse;
+}
+
 export interface PlaylistMonitorUpdate {
   enabled?: boolean | null;
   interval_minutes?: number | null;

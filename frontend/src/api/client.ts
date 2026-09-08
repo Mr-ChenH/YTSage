@@ -7,6 +7,7 @@ import type {
   HealthResponse,
   HistoryEntry,
   PlaylistMonitorCreate,
+  PlaylistMonitorCreateResponse,
   PlaylistMonitorResponse,
   PlaylistMonitorUpdate,
   SettingsResponse,
@@ -94,7 +95,7 @@ export function createApiClient({ token }: ApiClientOptions) {
         method: 'POST',
         headers: headers(token, true),
         body: JSON.stringify(request),
-      }).then(parseResponse<PlaylistMonitorResponse>),
+      }).then(parseResponse<PlaylistMonitorCreateResponse>),
     updateMonitor: (monitorId: string, request: PlaylistMonitorUpdate) =>
       fetch(`/api/monitors/${monitorId}`, {
         method: 'PATCH',

@@ -28,7 +28,7 @@ def _request() -> PlaylistMonitorCreate:
 
 
 @pytest.mark.anyio
-async def test_monitor_establishes_baseline_then_downloads_only_new_entries(tmp_path) -> None:
+async def test_monitor_downloads_current_selection_then_only_new_entries(tmp_path) -> None:
     first_entries = [PlaylistEntry(index=1, id="one", url="https://example.com/one")]
     updated_entries = [*first_entries, PlaylistEntry(index=2, id="two", url="https://example.com/two")]
     analyses = iter([_analysis(first_entries), _analysis(updated_entries)])
@@ -46,14 +46,18 @@ async def test_monitor_establishes_baseline_then_downloads_only_new_entries(tmp_
     )
     service = PlaylistMonitorService(Storage(tmp_path / "tasks.db"), task_manager, lambda _request: next(analyses))
 
-    monitor = await service.create(_request())
+    monitor = (await service.create(_request())).monitor
 
-    task_manager.create_task.assert_not_awaited()
+    task_manager.create_task.assert_awaited_once()
+    initial_request = task_manager.create_task.await_args.args[0]
+    assert [entry.id for entry in initial_request.playlist_entries] == ["one"]
     assert monitor.seen_entry_keys == ["id:one"]
     assert monitor.download_options["playlist_entries"] == []
     assert monitor.download_options["playlist_items"] is None
     assert monitor.last_checked_at is not None
+    assert monitor.last_task_id == "download-task"
 
+    task_manager.create_task.reset_mock()
     checked = await service.check_now(monitor.id)
 
     task_manager.create_task.assert_awaited_once()
@@ -63,6 +67,49 @@ async def test_monitor_establishes_baseline_then_downloads_only_new_entries(tmp_
     assert checked.seen_entry_keys == ["id:one", "id:two"]
     assert checked.last_task_id == "download-task"
     assert checked.last_error is None
+
+
+@pytest.mark.anyio
+async def test_monitor_baseline_covers_unselected_existing_entries(tmp_path) -> None:
+    all_entries = [
+        PlaylistEntry(index=1, id="one", url="https://example.com/one"),
+        PlaylistEntry(index=2, id="two", url="https://example.com/two"),
+    ]
+    request = _request()
+    request.download_options.playlist_entries = [all_entries[1]]
+    task_manager = Mock()
+    task_manager.create_task = AsyncMock(
+        return_value=TaskResponse(
+            id="initial-task",
+            url=request.url,
+            mode="video",
+            status="queued",
+            progress=TaskProgress(),
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+    )
+    service = PlaylistMonitorService(Storage(tmp_path / "tasks.db"), task_manager, lambda _request: _analysis(all_entries))
+
+    result = await service.create(request)
+
+    initial_request = task_manager.create_task.await_args.args[0]
+    assert [entry.id for entry in initial_request.playlist_entries] == ["two"]
+    assert result.monitor.seen_entry_keys == ["id:one", "id:two"]
+    assert result.initial_task.id == "initial-task"
+
+
+@pytest.mark.anyio
+async def test_monitor_creation_rolls_back_when_initial_task_fails(tmp_path) -> None:
+    storage = Storage(tmp_path / "tasks.db")
+    task_manager = Mock(create_task=AsyncMock(side_effect=RuntimeError("queue unavailable")))
+    entries = [PlaylistEntry(index=1, id="one", url="https://example.com/one")]
+    service = PlaylistMonitorService(storage, task_manager, lambda _request: _analysis(entries))
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        await service.create(_request())
+
+    assert storage.list_monitors() == []
 
 
 @pytest.mark.anyio

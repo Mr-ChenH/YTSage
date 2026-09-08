@@ -89,7 +89,7 @@
   "embedChapters": "嵌入章节",
   "normalizeAudio": "音频标准化",
   "createTask": "创建下载任务",
-  "createMonitor": "监控此合集",
+  "createMonitor": "下载并监控",
   "noMonitors": "暂无合集监控。请先在下载工作台分析合集并创建监控。",
   "monitorEnabled": "监控中",
   "monitorPaused": "已暂停",

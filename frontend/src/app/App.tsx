@@ -155,7 +155,7 @@ export function App() {
     </aside>
     <main className="main">
       <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={refreshCurrentPage} error={error} />
-      {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} onMonitorCreated={() => changePage('monitors')} />}
+      {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'tasks' && <TasksPage tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
       {page === 'monitors' && <MonitorsPage api={api} t={t} />}
       {page === 'history' && <HistoryPage entries={history} api={api} t={t} onChanged={loadHistory} onOpenFiles={openFilesPage} />}
