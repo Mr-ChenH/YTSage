@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ..models import CreateTaskRequest, HistoryEntry, TaskProgress, TaskResponse
+from ..models import CreateTaskRequest, HistoryEntry, PlaylistMonitorCreate, PlaylistMonitorResponse, TaskProgress, TaskResponse
 
 
 def utc_now() -> str:
@@ -68,6 +68,26 @@ class Storage:
                 """
             )
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_history_downloaded ON history (downloaded_at DESC)")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playlist_monitors (
+                    id TEXT PRIMARY KEY,
+                    url TEXT NOT NULL,
+                    title TEXT,
+                    enabled INTEGER NOT NULL,
+                    interval_minutes INTEGER NOT NULL,
+                    download_options_json TEXT NOT NULL,
+                    seen_entry_keys_json TEXT NOT NULL,
+                    last_checked_at TEXT,
+                    next_check_at TEXT NOT NULL,
+                    last_error TEXT,
+                    last_task_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_monitors_due ON playlist_monitors (enabled, next_check_at)")
 
     def create_task(self, task_id: str, request: CreateTaskRequest) -> TaskResponse:
         now = utc_now()
@@ -178,6 +198,97 @@ class Storage:
                 """,
                 (now, now),
             )
+
+    def create_monitor(self, monitor_id: str, request: PlaylistMonitorCreate) -> PlaylistMonitorResponse:
+        now = utc_now()
+        options = model_to_dict(request.download_options)
+        options["url"] = request.url
+        with self._lock, self._conn:
+            existing = self._conn.execute(
+                "SELECT id FROM playlist_monitors WHERE url = ?",
+                (request.url,),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError("This playlist is already monitored")
+            self._conn.execute(
+                """
+                INSERT INTO playlist_monitors (
+                    id, url, enabled, interval_minutes, download_options_json,
+                    seen_entry_keys_json, next_check_at, created_at, updated_at
+                ) VALUES (?, ?, 1, ?, ?, '[]', ?, ?, ?)
+                """,
+                (monitor_id, request.url, request.interval_minutes, json.dumps(options), now, now, now),
+            )
+        return self.get_monitor(monitor_id)
+
+    def get_monitor(self, monitor_id: str) -> PlaylistMonitorResponse:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM playlist_monitors WHERE id = ?", (monitor_id,)).fetchone()
+        if row is None:
+            raise KeyError(monitor_id)
+        return self._monitor_from_row(row)
+
+    def list_monitors(self) -> list[PlaylistMonitorResponse]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM playlist_monitors ORDER BY created_at DESC").fetchall()
+        return [self._monitor_from_row(row) for row in rows]
+
+    def list_due_monitors(self, now: str | None = None) -> list[PlaylistMonitorResponse]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM playlist_monitors WHERE enabled = 1 AND next_check_at <= ? ORDER BY next_check_at",
+                (now or utc_now(),),
+            ).fetchall()
+        return [self._monitor_from_row(row) for row in rows]
+
+    def update_monitor(self, monitor_id: str, **fields: Any) -> PlaylistMonitorResponse:
+        if not fields:
+            return self.get_monitor(monitor_id)
+        fields["updated_at"] = utc_now()
+        sets: list[str] = []
+        values: list[Any] = []
+        for key, value in fields.items():
+            if key == "download_options":
+                key, value = "download_options_json", json.dumps(value)
+            elif key == "seen_entry_keys":
+                key, value = "seen_entry_keys_json", json.dumps(value)
+            elif key == "enabled":
+                value = int(value)
+            sets.append(f"{key} = ?")
+            values.append(value)
+        values.append(monitor_id)
+        with self._lock, self._conn:
+            cursor = self._conn.execute(f"UPDATE playlist_monitors SET {', '.join(sets)} WHERE id = ?", values)
+        if cursor.rowcount == 0:
+            raise KeyError(monitor_id)
+        return self.get_monitor(monitor_id)
+
+    def schedule_next_monitor_check(self, monitor_id: str, interval_minutes: int, **fields: Any) -> PlaylistMonitorResponse:
+        fields["next_check_at"] = (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)).isoformat()
+        return self.update_monitor(monitor_id, **fields)
+
+    def delete_monitor(self, monitor_id: str) -> None:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM playlist_monitors WHERE id = ?", (monitor_id,))
+        if cursor.rowcount == 0:
+            raise KeyError(monitor_id)
+
+    def _monitor_from_row(self, row: sqlite3.Row) -> PlaylistMonitorResponse:
+        return PlaylistMonitorResponse(
+            id=row["id"],
+            url=row["url"],
+            title=row["title"],
+            enabled=bool(row["enabled"]),
+            interval_minutes=row["interval_minutes"],
+            download_options=json.loads(row["download_options_json"] or "{}"),
+            seen_entry_keys=json.loads(row["seen_entry_keys_json"] or "[]"),
+            last_checked_at=row["last_checked_at"],
+            next_check_at=row["next_check_at"],
+            last_error=row["last_error"],
+            last_task_id=row["last_task_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
     def add_history(self, entry: HistoryEntry) -> None:
         data = model_to_dict(entry)

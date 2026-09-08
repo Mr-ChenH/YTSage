@@ -21,6 +21,7 @@ interface WorkspacePageProps {
   t: T;
   settings: SettingsResponse | null;
   onTask: (task: TaskResponse) => void;
+  onMonitorCreated: () => void;
 }
 
 function modeLabel(mode: DownloadMode, t: T): string {
@@ -32,7 +33,7 @@ function modeLabel(mode: DownloadMode, t: T): string {
   return t(labels[mode]);
 }
 
-export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) {
+export function WorkspacePage({ api, t, settings, onTask, onMonitorCreated }: WorkspacePageProps) {
   const [url, setUrl] = useState('');
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<string | null>(null);
@@ -71,10 +72,8 @@ export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) 
     if (analysis) setSelectedFormat(preferredFormatForMode(analysis.formats, mode, settings?.default_video_resolution || 'best'));
   }, [mode, analysis, settings?.default_video_resolution]);
 
-  async function createTask() {
-    setBusy(true);
-    setError(null);
-    const request: CreateTaskRequest = {
+  function buildRequest(): CreateTaskRequest {
+    return {
       url,
       mode,
       format_id: selectedFormat,
@@ -93,8 +92,27 @@ export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) 
       playlist_entries: selectedPlaylistEntries(analysis, selectedPlaylistIndexes),
       filename_template: taskFilenameTemplate(settings?.filename_template || filenameTemplatePresets[2].template, Boolean(analysis?.is_playlist)),
     };
+  }
+
+  async function createTask() {
+    setBusy(true);
+    setError(null);
     try {
-      onTask(await api.createTask(request));
+      onTask(await api.createTask(buildRequest()));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createMonitor() {
+    if (!analysis?.is_playlist) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.createMonitor({ url, interval_minutes: 60, download_options: buildRequest() });
+      onMonitorCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -123,7 +141,7 @@ export function WorkspacePage({ api, t, settings, onTask }: WorkspacePageProps) 
         <div className="check-grid"><label className="check"><input type="checkbox" checked={mergeSubtitles} onChange={(event) => setMergeSubtitles(event.target.checked)} /> {t('mergeSubtitles')}</label><label className="check"><input type="checkbox" checked={saveThumbnail} onChange={(event) => setSaveThumbnail(event.target.checked)} /> {t('saveThumbnail')}</label><label className="check"><input type="checkbox" checked={saveDescription} onChange={(event) => setSaveDescription(event.target.checked)} /> {t('saveDescription')}</label><label className="check"><input type="checkbox" checked={embedChapters} onChange={(event) => setEmbedChapters(event.target.checked)} /> {t('embedChapters')}</label><label className="check"><input type="checkbox" checked={audioNormalization} onChange={(event) => setAudioNormalization(event.target.checked)} disabled={mode !== 'audio'} /> {t('normalizeAudio')}</label></div>
         <label>{t('proxyUrl')}<input value={proxyUrl} placeholder={t('proxyPlaceholder')} onChange={(event) => setProxyUrl(event.target.value)} /></label>
         <label>{t('concurrentFragments')}<input type="number" min="1" max="16" value={concurrentFragments} onChange={(event) => setConcurrentFragments(Math.max(1, Math.min(16, Number(event.target.value) || 1)))} /></label>
-        <button className="primary" onClick={createTask} disabled={!url || busy || Boolean(analysis?.is_playlist && selectedPlaylistIndexes.length === 0)}>{t('createTask')}</button>
+        <div className="toolbar"><button className="primary" onClick={createTask} disabled={!url || busy || Boolean(analysis?.is_playlist && selectedPlaylistIndexes.length === 0)}>{t('createTask')}</button><button onClick={createMonitor} disabled={!analysis?.is_playlist || busy}>{t('createMonitor')}</button></div>
       </div>
     </aside>
   </div>;

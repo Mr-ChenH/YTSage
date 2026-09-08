@@ -4,6 +4,7 @@ import type { FileEntry, FileListResponse, HealthResponse, HistoryEntry, Setting
 import { messages, type Locale, type T } from '../i18n';
 import { FilesPage } from '../pages/files/FilesPage';
 import { HistoryPage } from '../pages/history/HistoryPage';
+import { MonitorsPage } from '../pages/monitors/MonitorsPage';
 import { PlayerPage } from '../pages/player/PlayerPage';
 import { SettingsPage } from '../pages/settings/SettingsPage';
 import { SystemPage } from '../pages/system/SystemPage';
@@ -154,8 +155,9 @@ export function App() {
     </aside>
     <main className="main">
       <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={refreshCurrentPage} error={error} />
-      {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
+      {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} onMonitorCreated={() => changePage('monitors')} />}
       {page === 'tasks' && <TasksPage tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
+      {page === 'monitors' && <MonitorsPage api={api} t={t} />}
       {page === 'history' && <HistoryPage entries={history} api={api} t={t} onChanged={loadHistory} onOpenFiles={openFilesPage} />}
       {page === 'files' && <FilesPage library={fileLibrary} token={token} api={api} t={t} onLoaded={setFileLibrary} onPlay={playFile} />}
       {page === 'player' && <PlayerPage current={currentFile} queue={playQueue} folder={playFolder} token={token} api={api} t={t} onSelect={setCurrentFile} onQueue={setPlayQueue} onFolder={setPlayFolder} />}

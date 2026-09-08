@@ -148,6 +148,33 @@ export interface HistoryEntry {
   metadata: Record<string, unknown>;
 }
 
+export interface PlaylistMonitorCreate {
+  url: string;
+  interval_minutes: number;
+  download_options: CreateTaskRequest;
+}
+
+export interface PlaylistMonitorUpdate {
+  enabled?: boolean | null;
+  interval_minutes?: number | null;
+}
+
+export interface PlaylistMonitorResponse {
+  id: string;
+  url: string;
+  title?: string | null;
+  enabled: boolean;
+  interval_minutes: number;
+  download_options: Record<string, unknown>;
+  seen_entry_keys: string[];
+  last_checked_at?: string | null;
+  next_check_at: string;
+  last_error?: string | null;
+  last_task_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface FileEntry {
   id: string;
   name: string;

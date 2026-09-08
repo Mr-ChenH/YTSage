@@ -19,6 +19,7 @@ interface TopBarProps {
 const titles: Record<Page, [TKey, TKey]> = {
   workspace: ['workspaceTitle', 'workspaceDesc'],
   tasks: ['tasksTitle', 'tasksDesc'],
+  monitors: ['monitorsTitle', 'monitorsDesc'],
   history: ['historyTitle', 'historyDesc'],
   files: ['filesTitle', 'filesDesc'],
   player: ['playerTitle', 'playerDesc'],

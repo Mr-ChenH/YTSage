@@ -1,8 +1,9 @@
-import { Activity, Download, FolderOpen, History, MonitorPlay, Settings2, SlidersHorizontal } from 'lucide-react';
+import { Activity, Binoculars, Download, FolderOpen, History, MonitorPlay, Settings2, SlidersHorizontal } from 'lucide-react';
 
 export const navItems = [
   ['workspace', Download, 'navWorkspace'],
   ['tasks', Activity, 'navTasks'],
+  ['monitors', Binoculars, 'navMonitors'],
   ['history', History, 'navHistory'],
   ['files', FolderOpen, 'navFiles'],
   ['player', MonitorPlay, 'navPlayer'],

@@ -273,7 +273,7 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .shell { display: block; padding-bottom: 58px; }
   .sidebar { position: fixed; z-index: 50; inset: auto 0 0; width: 100%; height: 58px; padding: 5px 6px; display: block; border-top: 1px solid var(--line); border-right: 0; background: rgba(248,249,250,0.97); }
   .brand, .sidebar-status { display: none; }
-  .nav { height: 100%; padding: 0; display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 1px; }
+  .nav { height: 100%; padding: 0; display: grid; grid-template-columns: repeat(8,minmax(0,1fr)); gap: 1px; }
   .nav button { min-height: 46px; display: grid; place-items: center; }
   .nav-icon { width: 18px; height: 18px; }
   .topbar { min-height: 57px; padding: 8px 12px; }

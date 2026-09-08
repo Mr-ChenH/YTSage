@@ -6,6 +6,9 @@ import type {
   FileListResponse,
   HealthResponse,
   HistoryEntry,
+  PlaylistMonitorCreate,
+  PlaylistMonitorResponse,
+  PlaylistMonitorUpdate,
   SettingsResponse,
   TaskEvent,
   TaskResponse,
@@ -85,6 +88,24 @@ export function createApiClient({ token }: ApiClientOptions) {
         headers: headers(token, true),
         body: JSON.stringify(request),
       }).then(parseResponse<TaskResponse>),
+    monitors: () => fetch('/api/monitors', { headers: headers(token) }).then(parseResponse<PlaylistMonitorResponse[]>),
+    createMonitor: (request: PlaylistMonitorCreate) =>
+      fetch('/api/monitors', {
+        method: 'POST',
+        headers: headers(token, true),
+        body: JSON.stringify(request),
+      }).then(parseResponse<PlaylistMonitorResponse>),
+    updateMonitor: (monitorId: string, request: PlaylistMonitorUpdate) =>
+      fetch(`/api/monitors/${monitorId}`, {
+        method: 'PATCH',
+        headers: headers(token, true),
+        body: JSON.stringify(request),
+      }).then(parseResponse<PlaylistMonitorResponse>),
+    checkMonitor: (monitorId: string) =>
+      fetch(`/api/monitors/${monitorId}/check`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlaylistMonitorResponse>),
+    deleteMonitor: (monitorId: string) => fetch(`/api/monitors/${monitorId}`, { method: 'DELETE', headers: headers(token) }).then((response) => {
+      if (!response.ok) return parseResponse<never>(response);
+    }),
     cancelTask: (taskId: string) =>
       fetch(`/api/tasks/${taskId}/cancel`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
     retryPlaylistItem: (taskId: string, playlistIndex: number) =>

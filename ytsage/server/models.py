@@ -130,6 +130,33 @@ class HistoryEntry(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlaylistMonitorCreate(BaseModel):
+    url: str
+    interval_minutes: int = Field(default=60, ge=5, le=10080)
+    download_options: CreateTaskRequest
+
+
+class PlaylistMonitorUpdate(BaseModel):
+    enabled: bool | None = None
+    interval_minutes: int | None = Field(default=None, ge=5, le=10080)
+
+
+class PlaylistMonitorResponse(BaseModel):
+    id: str
+    url: str
+    title: str | None = None
+    enabled: bool
+    interval_minutes: int
+    download_options: dict[str, Any] = Field(default_factory=dict)
+    seen_entry_keys: list[str] = Field(default_factory=list)
+    last_checked_at: str | None = None
+    next_check_at: str
+    last_error: str | None = None
+    last_task_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
 class FileEntry(BaseModel):
     id: str
     name: str
