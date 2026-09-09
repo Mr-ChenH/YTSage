@@ -6,6 +6,7 @@ import type { T, TKey } from '../../i18n';
 import { AnalysisDetails } from './AnalysisDetails';
 import { AnalysisSummary } from './AnalysisSummary';
 import {
+  bestVideoFormat,
   formatLabel,
   modeFormats,
   playlistItemsValue,
@@ -35,6 +36,32 @@ function modeLabel(mode: DownloadMode, t: T): string {
   return t(labels[mode]);
 }
 
+function qualityLabel(resolution: string | null | undefined, t: T): string {
+  if (!resolution) return t('unknownResolution');
+  const dimensions = resolution.match(/(\d+)\s*x\s*(\d+)/i);
+  const height = dimensions ? Number(dimensions[2]) : Number(resolution.match(/(\d+)p/i)?.[1] || 0);
+  const quality = height >= 2160 ? '4K' : height >= 1440 ? '2K' : height >= 1080 ? 'Full HD' : height >= 720 ? 'HD' : height ? `${height}p` : '';
+  return quality ? `${quality} (${resolution})` : resolution;
+}
+
+function friendlyCodec(codec: string | null | undefined): string | null {
+  if (!codec || codec === 'none') return null;
+  const normalized = codec.toLowerCase();
+  if (normalized.startsWith('av01')) return 'AV1';
+  if (normalized.startsWith('avc1') || normalized.startsWith('h264')) return 'H.264';
+  if (normalized.startsWith('hev1') || normalized.startsWith('hvc1') || normalized.startsWith('h265')) return 'H.265';
+  if (normalized.startsWith('vp9') || normalized.startsWith('vp09')) return 'VP9';
+  if (normalized.startsWith('mp4a')) return 'AAC';
+  if (normalized.startsWith('opus')) return 'Opus';
+  return codec;
+}
+
+function videoSpecification(format: ReturnType<typeof bestVideoFormat>, t: T): string {
+  if (!format) return '-';
+  const parts = [format.fps ? `${format.fps} FPS` : null, friendlyCodec(format.video_codec), format.ext?.toUpperCase()].filter(Boolean);
+  return parts.length ? parts.join(' · ') : t('formatDetailsUnavailable');
+}
+
 export function WorkspacePage({ api, t, settings, state, onState, onTask }: WorkspacePageProps) {
   const {
     url, analysis, selectedFormat, audioFormat, videoOutputFormat, selectedSubtitleLangs,
@@ -44,6 +71,10 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
   const update = (patch: Partial<WorkspaceState>) => onState({ ...state, ...patch });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const availableFormats = modeFormats(analysis?.formats || [], mode);
+  const currentFormat = selectedFormat
+    ? availableFormats.find((format) => format.format_id === selectedFormat) || null
+    : mode === 'video' ? bestVideoFormat(analysis?.formats || []) : availableFormats.find((format) => format.format_id === 'bestaudio') || availableFormats[0] || null;
 
   async function analyze() {
     setBusy(true);
@@ -129,7 +160,13 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
       <div className="panel-header"><h2>{t('downloadOptions')}</h2><span className="badge">{t('queued')}</span></div>
       <div className="panel-body options-grid">
         <div className="segmented">{(['video', 'audio', 'subtitles'] as DownloadMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => update({ mode: item })}>{modeLabel(item, t)}</button>)}</div>
-        <label>{t('formatSelect')}<select value={selectedFormat || ''} onChange={(event) => update({ selectedFormat: event.target.value || null })} disabled={mode === 'subtitles'}><option value="">{mode === 'audio' ? 'bestaudio' : t('autoBestFormat')}</option>{modeFormats(analysis?.formats || [], mode).map((format) => <option key={format.format_id} value={format.format_id}>{formatLabel(format)}</option>)}</select></label>
+        <label>{t('formatSelect')}<select value={selectedFormat || ''} onChange={(event) => update({ selectedFormat: event.target.value || null })} disabled={mode === 'subtitles'}><option value="">{mode === 'audio' ? 'bestaudio' : t('autoBestFormat')}</option>{availableFormats.map((format) => <option key={format.format_id} value={format.format_id}>{formatLabel(format)}</option>)}</select></label>
+        {analysis && mode !== 'subtitles' && <div className="selected-format-summary">
+          <div><span>{t('currentFormatSelection')}</span><strong>{selectedFormat ? t('manualFormatSelection') : t('autoBestFormat')}</strong></div>
+          <div><span>{t('expectedQuality')}</span><strong>{qualityLabel(currentFormat?.resolution, t)}</strong></div>
+          <div><span>{t(mode === 'video' ? 'videoSpecification' : 'audioSpecification')}</span><strong>{mode === 'video' ? videoSpecification(currentFormat, t) : [friendlyCodec(currentFormat?.audio_codec), currentFormat?.ext?.toUpperCase()].filter(Boolean).join(' · ') || t('formatDetailsUnavailable')}</strong></div>
+          {mode === 'video' && <div><span>{t('audio')}</span><strong>{t('bestAvailableAudio')}</strong></div>}
+        </div>}
         {mode === 'video' && <label>{t('videoOutputFormat')}<select value={videoOutputFormat} onChange={(event) => update({ videoOutputFormat: event.target.value })}>{['mp4', 'webm', 'mkv'].map((format) => <option key={format} value={format}>{format}</option>)}</select></label>}
         {mode === 'audio' && <label>{t('audioOutputFormat')}<select value={audioFormat} onChange={(event) => update({ audioFormat: event.target.value })}>{['mp3', 'm4a', 'opus', 'flac', 'wav'].map((format) => <option key={format} value={format}>{format}</option>)}</select></label>}
         {!!analysis?.subtitles.length && <div className="section-block compact-options"><div className="section-heading"><h3>{t('subtitleLanguages')}</h3><span className="badge blue">{selectedSubtitleLangs.length}</span></div><div className="check-grid">{analysis.subtitles.map((subtitle) => <label className="check" key={`${subtitle.language}-${subtitle.automatic ? 'auto' : 'manual'}`}><input type="checkbox" checked={selectedSubtitleLangs.includes(subtitle.language)} onChange={() => update({ selectedSubtitleLangs: toggleListItem(selectedSubtitleLangs, subtitle.language) })} /> {subtitle.language}{subtitle.name ? ` - ${subtitle.name}` : ''}</label>)}</div></div>}

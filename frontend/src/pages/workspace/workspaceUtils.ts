@@ -57,6 +57,28 @@ export function preferredFormatForMode(formats: FormatInfo[], mode: DownloadMode
   return matched?.format_id || null;
 }
 
+function formatResolutionHeight(format: FormatInfo): number {
+  const resolution = format.resolution || '';
+  const dimensions = resolution.match(/\d+\s*x\s*(\d+)/i);
+  if (dimensions) return Number(dimensions[1]);
+  const vertical = resolution.match(/(\d+)p/i);
+  return vertical ? Number(vertical[1]) : 0;
+}
+
+export function bestVideoFormat(formats: FormatInfo[]): FormatInfo | null {
+  const candidates = modeFormats(formats, 'video').filter((format) => format.format_id !== 'best');
+  if (!candidates.length) return modeFormats(formats, 'video')[0] || null;
+  return [...candidates].sort((left, right) => {
+    const heightDifference = formatResolutionHeight(right) - formatResolutionHeight(left);
+    if (heightDifference) return heightDifference;
+    const fpsDifference = (right.fps || 0) - (left.fps || 0);
+    if (fpsDifference) return fpsDifference;
+    const rightVideoOnly = right.type === 'video' ? 1 : 0;
+    const leftVideoOnly = left.type === 'video' ? 1 : 0;
+    return rightVideoOnly - leftVideoOnly;
+  })[0];
+}
+
 export function formatLabel(format: FormatInfo): string {
   return [format.format_id, format.type, format.resolution, format.ext, format.video_codec, format.audio_codec].filter(Boolean).map(String).join(' / ');
 }
