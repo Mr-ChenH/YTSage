@@ -1,3 +1,4 @@
+import { ExternalLink, ListVideo, Radio, Subtitles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AnalyzeResponse } from '../../api/types';
 import type { T } from '../../i18n';
@@ -21,22 +22,23 @@ function cookieAnalysisStatus(analysis: AnalyzeResponse, field: string, t: T): {
 export function AnalysisSummary({ analysis, t }: { analysis: AnalyzeResponse | null; t: T }) {
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   useEffect(() => setThumbnailFailed(false), [analysis?.thumbnail_url]);
-  if (!analysis) return <div className="empty-state">{t('analyzeEmpty')}</div>;
+  if (!analysis) return null;
   const warning = warningText(analysis, t);
   const cookieExpiry = cookieAnalysisStatus(analysis, 'cookie_expiry_status', t);
   const cookieLogin = cookieAnalysisStatus(analysis, 'cookie_login_status', t);
   const webpageUrl = rawText(analysis, 'webpage_url');
   const originalUrl = rawText(analysis, 'original_url');
+  const sourceUrl = webpageUrl || originalUrl;
   const extractor = rawText(analysis, 'extractor') || rawText(analysis, 'extractor_key');
   const thumbnailUrl = analysis.thumbnail_url && !thumbnailFailed ? analysis.thumbnail_url : '/static/assets/main.png';
-  return <div className="summary">
-    <div className="preview"><img key={thumbnailUrl} src={thumbnailUrl} alt="Video thumbnail" referrerPolicy="no-referrer" onError={() => setThumbnailFailed(true)} /></div>
-    <div className="stack">
-      <h2>{analysis.title || t('untitled')}</h2>
-      <span className="muted">{analysis.channel || t('unknownChannel')} {analysis.duration ? `- ${Math.round(analysis.duration / 60)} ${t('minutes')}` : ''}</span>
-      <div className="badge-row"><span className={`badge ${warning ? 'amber' : 'green'}`}>{warning ? t('fallbackFormats') : t('formatsReady')}</span>{cookieExpiry && <span className={`badge ${cookieExpiry.error ? 'red' : 'green'}`}>{cookieExpiry.text}</span>}{cookieLogin && <span className={`badge ${cookieLogin.error ? 'red' : cookieLogin.text === t('cookieLoginUnknown') ? 'amber' : 'green'}`}>{cookieLogin.text}</span>}<span className="badge blue">{t('subtitles')}: {analysis.subtitles.length}</span>{analysis.is_playlist && <span className="badge amber">{t('playlist')}: {analysis.playlist_count}</span>}{extractor && <span className="badge">{t('extractor')}: {extractor}</span>}</div>
-      {warning && <p className="notice-line"><strong>{t('analyzeWarning')}:</strong> {warning}</p>}
-      <div className="meta-grid">{webpageUrl && <a href={webpageUrl} target="_blank" rel="noreferrer"><span>{t('sourcePage')}</span><strong>{webpageUrl}</strong></a>}{originalUrl && originalUrl !== webpageUrl && <a href={originalUrl} target="_blank" rel="noreferrer"><span>{t('originalUrl')}</span><strong>{originalUrl}</strong></a>}</div>
+  return <section className="media-summary">
+    <div className="media-preview"><img key={thumbnailUrl} src={thumbnailUrl} alt="" referrerPolicy="no-referrer" onError={() => setThumbnailFailed(true)} /></div>
+    <div className="media-summary-copy">
+      <div className="media-title-row"><div><span>{analysis.is_playlist ? t('playlist') : t('mediaReady')}</span><h2>{analysis.title || t('untitled')}</h2></div>{sourceUrl && <a className="icon-button" href={sourceUrl} target="_blank" rel="noreferrer" title={t('sourcePage')}><ExternalLink aria-hidden="true" /></a>}</div>
+      <p>{analysis.channel || t('unknownChannel')}{analysis.duration ? ` · ${Math.round(analysis.duration / 60)} ${t('minutes')}` : ''}{extractor ? ` · ${extractor}` : ''}</p>
+      <div className="media-stats"><span><Radio aria-hidden="true" />{analysis.formats.length} {t('formatsCount')}</span><span><Subtitles aria-hidden="true" />{analysis.subtitles.length} {t('subtitles')}</span>{analysis.is_playlist && <span><ListVideo aria-hidden="true" />{analysis.playlist_count} {t('playlistItems')}</span>}</div>
+      <div className="badge-row"><span className={`badge ${warning ? 'amber' : 'green'}`}>{warning ? t('fallbackFormats') : t('formatsReady')}</span>{cookieExpiry && <span className={`badge ${cookieExpiry.error ? 'red' : 'green'}`}>{cookieExpiry.text}</span>}{cookieLogin && <span className={`badge ${cookieLogin.error ? 'red' : cookieLogin.text === t('cookieLoginUnknown') ? 'amber' : 'green'}`}>{cookieLogin.text}</span>}</div>
     </div>
-  </div>;
+    {warning && <p className="notice-line"><strong>{t('analyzeWarning')}:</strong> {warning}</p>}
+  </section>;
 }
