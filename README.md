@@ -70,7 +70,8 @@ YTSage 将 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 和 [FFmpeg](https://ffmpe
 ### 配置与安全
 
 - SQLite 持久化任务和下载历史
-- 管理默认、Bilibili 和 YouTube Cookies
+- 管理默认和 YouTube Cookies，并添加多个独立的 Bilibili 账号
+- 按账号浏览收藏夹、收藏的收藏夹和稍后再看，支持分页选择下载
 - 可选 Bearer Token 访问控制
 - 查看服务、目录、yt-dlp 和 FFmpeg 健康状态
 - 在系统页面更新 yt-dlp 和 FFmpeg 辅助依赖
@@ -240,6 +241,10 @@ Authorization: Bearer <token>
 - `bilibili`：哔哩哔哩
 
 Cookies 保存在 `/config`，请将该目录视为敏感数据，不要提交到 Git 或公开分享。
+
+多个哔哩哔哩账号通过“账号”页面管理。每个账号使用独立的 `/config/accounts/{account_id}/cookies.txt`，可分别验证登录、浏览我的收藏夹、收藏的收藏夹和稍后再看。账号资源按页获取，选择条目后仍通过现有任务队列逐项下载；“下载并监控”会下载当前资源并在后续检查中只下载新增视频。
+
+YTSage 不接收或保存平台密码，也不会在 API 中返回已导入的 Cookie 内容。账号 Cookie 等同于浏览器登录会话；启用账号功能时应配置 `YTSAGE_AUTH_TOKEN`，通过公网访问还必须使用 HTTPS 反向代理。
 
 ## 使用流程
 

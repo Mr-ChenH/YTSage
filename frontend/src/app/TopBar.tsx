@@ -23,6 +23,7 @@ const titles: Record<Page, [TKey, TKey]> = {
   history: ['historyTitle', 'historyDesc'],
   files: ['filesTitle', 'filesDesc'],
   player: ['playerTitle', 'playerDesc'],
+  accounts: ['accountsTitle', 'accountsDesc'],
   settings: ['settingsTitle', 'settingsDesc'],
   system: ['systemTitle', 'systemDesc'],
 };

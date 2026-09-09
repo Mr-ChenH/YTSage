@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from ..config import ServerConfig
 from ..models import CreateTaskRequest, TaskProgress, TaskResponse
-from ..services.cookies import cookie_file_for_url
+from ..services.cookies import cookie_file_for_url, cookie_profile_for_url
 from ..services.download_service import build_download_command, discover_new_files, parse_progress_line, snapshot_files
 from ..services.storage import Storage, utc_now
 from .process import decode_output_line, select_output_file
+
+if TYPE_CHECKING:
+    from ..services.accounts import AccountService
 
 PublishCallback = Callable[[str, TaskResponse], Awaitable[None]]
 
@@ -18,11 +21,12 @@ PublishCallback = Callable[[str, TaskResponse], Awaitable[None]]
 class DownloadExecutor:
     """Runs yt-dlp processes and owns transport-level fallback behavior."""
 
-    def __init__(self, config: ServerConfig, storage: Storage, processes: dict[str, asyncio.subprocess.Process], publish: PublishCallback) -> None:
+    def __init__(self, config: ServerConfig, storage: Storage, processes: dict[str, asyncio.subprocess.Process], publish: PublishCallback, account_service: AccountService | None = None) -> None:
         self.config = config
         self.storage = storage
         self.processes = processes
         self.publish = publish
+        self.account_service = account_service
 
     async def execute_with_youtube_fallback(self, task: TaskResponse, request: CreateTaskRequest, progress: TaskProgress, fallback_status: str = "Downloaded at 360p after YouTube rejected the selected format") -> tuple[list[str], int, str | None, TaskProgress]:
         output, return_code, output_path, progress = await self.execute(task, request, progress)
@@ -42,7 +46,14 @@ class DownloadExecutor:
         return output, fallback_code, fallback_path, progress
 
     async def execute(self, task: TaskResponse, request: CreateTaskRequest, progress: TaskProgress, *, use_cookies: bool = True) -> tuple[list[str], int, str | None, TaskProgress]:
-        if use_cookies and not request.cookie_file:
+        if use_cookies and request.account_id:
+            if self.account_service is None:
+                return ["The selected account is unavailable."], 1, None, progress
+            try:
+                request.cookie_file = str(self.account_service.resolve_cookie_file(request.account_id, cookie_profile_for_url(request.url)))
+            except (KeyError, ValueError) as exc:
+                return [str(exc) or "The selected account is unavailable."], 1, None, progress
+        elif use_cookies and not request.cookie_file:
             cookie_file = cookie_file_for_url(self.config.config_dir, request.url)
             if cookie_file is not None:
                 request.cookie_file = str(cookie_file)

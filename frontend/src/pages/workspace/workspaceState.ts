@@ -4,6 +4,7 @@ export interface WorkspaceState {
   url: string;
   analysis: AnalyzeResponse | null;
   selectedFormat: string | null;
+  accountId: string | null;
   audioFormat: string;
   videoOutputFormat: string;
   selectedSubtitleLangs: string[];
@@ -22,6 +23,7 @@ export const initialWorkspaceState: WorkspaceState = {
   url: '',
   analysis: null,
   selectedFormat: null,
+  accountId: null,
   audioFormat: 'mp3',
   videoOutputFormat: 'mp4',
   selectedSubtitleLangs: [],

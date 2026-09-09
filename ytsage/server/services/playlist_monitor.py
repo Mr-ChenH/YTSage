@@ -41,14 +41,18 @@ class PlaylistMonitorService:
         self._runner = None
 
     async def create(self, request: PlaylistMonitorCreate) -> PlaylistMonitorCreateResponse:
-        analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=request.url))
+        account_id = request.account_id or request.download_options.account_id
+        analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=request.url, account_id=account_id))
         if not analysis.is_playlist or not analysis.playlist_entries:
             raise ValueError("URL did not resolve to a playlist or collection")
 
         normalized = request.model_copy(deep=True)
+        normalized.account_id = account_id
         normalized.download_options.url = request.url
+        normalized.download_options.account_id = account_id
         initial_request = request.download_options.model_copy(deep=True)
         initial_request.url = request.url
+        initial_request.account_id = account_id
         if not initial_request.playlist_entries:
             initial_request.playlist_entries = analysis.playlist_entries
         initial_request.playlist_items = None
@@ -107,7 +111,7 @@ class PlaylistMonitorService:
         self._checking.add(monitor_id)
         try:
             monitor = self.storage.get_monitor(monitor_id)
-            analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=monitor.url))
+            analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=monitor.url, account_id=monitor.account_id))
             if not analysis.is_playlist or not analysis.playlist_entries:
                 raise ValueError("URL did not resolve to a playlist or collection")
             current_keys = [playlist_entry_key(entry) for entry in analysis.playlist_entries]
@@ -119,6 +123,7 @@ class PlaylistMonitorService:
             if monitor.last_checked_at is not None and new_entries:
                 options = CreateTaskRequest(**monitor.download_options).model_copy(deep=True)
                 options.url = monitor.url
+                options.account_id = monitor.account_id
                 collection_title = analysis.raw.get("collection_title")
                 options.playlist_title = (
                     collection_title if isinstance(collection_title, str) else None

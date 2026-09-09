@@ -5,15 +5,19 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import ServerConfig
 from ..downloads.executor import DownloadExecutor
 from ..downloads.playlist import copy_progress, parse_queue_item, playlist_entries, playlist_item_filename_template
 from ..downloads.process import decode_output_line, terminate_process
 from ..models import CreateTaskRequest, HistoryEntry, PlaylistEntry, TaskEvent, TaskProgress, TaskResponse
+from .cookies import COOKIE_PROFILES, cookie_file_path, cookie_profile_for_url
 from .files import classify_file
 from .storage import Storage, utc_now
+
+if TYPE_CHECKING:
+    from .accounts import AccountService
 
 
 def _decode_output_line(raw: bytes) -> str:
@@ -25,13 +29,14 @@ def _playlist_item_filename_template(template: str, title: str, index: int) -> s
 
 
 class TaskManager:
-    def __init__(self, config: ServerConfig, storage: Storage) -> None:
+    def __init__(self, config: ServerConfig, storage: Storage, account_service: AccountService | None = None) -> None:
         self.config = config
         self.storage = storage
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.processes: dict[str, asyncio.subprocess.Process] = {}
         self.subscribers: set[asyncio.Queue[TaskEvent]] = set()
-        self.executor = DownloadExecutor(config, storage, self.processes, self._publish)
+        self.account_service = account_service
+        self.executor = DownloadExecutor(config, storage, self.processes, self._publish, account_service)
         self._workers: list[asyncio.Task[Any]] = []
         self._claimed_tasks: set[str] = set()
         self._started = False
@@ -56,6 +61,15 @@ class TaskManager:
         self._started = False
 
     async def create_task(self, request: CreateTaskRequest) -> TaskResponse:
+        if request.cookie_file:
+            supplied = Path(request.cookie_file).resolve()
+            allowed = {cookie_file_path(self.config.config_dir, profile).resolve() for profile in COOKIE_PROFILES}
+            if supplied not in allowed:
+                raise ValueError("Custom cookie file paths are not allowed.")
+        if request.account_id:
+            if self.account_service is None:
+                raise ValueError("Account selection is unavailable.")
+            self.account_service.resolve_cookie_file(request.account_id, cookie_profile_for_url(request.url))
         task_id = uuid.uuid4().hex
         task = self.storage.create_task(task_id, request)
         await self.queue.put(task_id)

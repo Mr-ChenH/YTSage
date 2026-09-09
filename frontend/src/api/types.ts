@@ -64,6 +64,75 @@ export interface CookieSaveResponse {
   status?: CookieProfileStatus | null;
 }
 
+export type Platform = 'bilibili';
+export type AccountState = 'valid' | 'invalid' | 'unknown' | 'expired';
+export type AccountResourceType = 'created_favorite' | 'collected_favorite' | 'watch_later' | 'collection' | 'series';
+
+export interface PlatformAccount {
+  id: string;
+  platform: Platform;
+  label: string;
+  external_id?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  vip_type?: number | null;
+  state: AccountState;
+  cookie_status: CookieProfileStatus;
+  is_default: boolean;
+  last_verified_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccountCreateRequest {
+  platform: Platform;
+  label: string;
+  cookie_content: string;
+  make_default: boolean;
+}
+
+export interface AccountUpdateRequest {
+  label?: string;
+  cookie_content?: string;
+  make_default?: boolean;
+}
+
+export interface AccountResource {
+  id: string;
+  account_id: string;
+  platform: Platform;
+  resource_type: AccountResourceType;
+  external_id: string;
+  title: string;
+  description?: string | null;
+  cover_url?: string | null;
+  owner_name?: string | null;
+  owner_id?: string | null;
+  item_count?: number | null;
+  is_private: boolean;
+  source_url: string;
+  updated_at?: number | null;
+}
+
+export interface PageInfo {
+  offset: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface AccountResourceListResponse {
+  items: AccountResource[];
+  page: PageInfo;
+}
+
+export interface AccountResourceEntriesResponse {
+  resource: AccountResource;
+  entries: PlaylistEntry[];
+  page: PageInfo;
+}
+
 export interface FormatInfo {
   format_id: string;
   ext?: string | null;
@@ -123,6 +192,7 @@ export interface CreateTaskRequest {
   proxy_url?: string | null;
   concurrent_fragments?: number | null;
   cookie_file?: string | null;
+  account_id?: string | null;
   playlist_items?: string | null;
   playlist_title?: string | null;
   playlist_entries: PlaylistEntry[];
@@ -188,6 +258,7 @@ export interface HistoryListResponse {
 export interface PlaylistMonitorCreate {
   url: string;
   interval_minutes: number;
+  account_id?: string | null;
   download_options: CreateTaskRequest;
 }
 
@@ -204,6 +275,7 @@ export interface PlaylistMonitorUpdate {
 export interface PlaylistMonitorResponse {
   id: string;
   url: string;
+  account_id?: string | null;
   title?: string | null;
   enabled: boolean;
   interval_minutes: number;

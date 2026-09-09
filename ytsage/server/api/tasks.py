@@ -24,7 +24,12 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
     async def create_task(request: CreateTaskRequest) -> TaskResponse:
         if not request.filename_template.strip():
             request.filename_template = filename_template(config.config_dir)
-        return await manager.create_task(request)
+        try:
+            return await manager.create_task(request)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Account not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=424, detail=str(exc)) from exc
 
     @router.get("/tasks", response_model=list[TaskResponse], dependencies=auth)
     def list_tasks(offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200), active_only: bool = Query(False)) -> list[TaskResponse]:

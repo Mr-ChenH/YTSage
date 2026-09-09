@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 from fastapi import HTTPException, status
@@ -14,6 +14,9 @@ from ..analyzers import bilibili
 from ..models import AnalyzeRequest, AnalyzeResponse, FormatInfo, PlaylistEntry, SubtitleInfo
 from .cookies import cookie_file_for_url, cookie_file_path, cookie_profile_for_url, cookie_profile_status, save_cookie_login_status, youtube_login_cookies_present
 from .dependencies import ytdlp_base_command
+
+if TYPE_CHECKING:
+    from .accounts import AccountService
 
 
 def _as_str(value: Any) -> str | None:
@@ -143,9 +146,25 @@ def _subtitles_from(data: dict[str, Any]) -> list[SubtitleInfo]:
     return subtitles
 
 
-def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None = None) -> AnalyzeResponse:
+def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None = None, account_service: AccountService | None = None) -> AnalyzeResponse:
     cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--skip-download"]
-    cookie_file = cookie_file_for_url(config_dir, request.url) if config_dir is not None else None
+    cookie_file = None
+    selected_account = None
+    if request.account_id:
+        if account_service is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Account selection is unavailable.")
+        try:
+            selected_account = account_service.storage.get_account(request.account_id)
+            expected_profile = cookie_profile_for_url(request.url)
+            if expected_profile != selected_account.platform:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The selected account does not match this URL.")
+            cookie_file = account_service.resolve_cookie_file(request.account_id, expected_profile)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=str(exc)) from exc
+    elif config_dir is not None:
+        cookie_file = cookie_file_for_url(config_dir, request.url)
     requested_profile = cookie_profile_for_url(request.url)
     requested_cookie_status = cookie_profile_status(cookie_file_path(config_dir, requested_profile)) if config_dir is not None else None
     if cookie_file is not None:
@@ -168,7 +187,15 @@ def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None 
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="yt-dlp returned invalid JSON") from exc
 
     raw: dict[str, Any] = {key: _as_str(data.get(key)) for key in ("extractor", "extractor_key", "webpage_url", "original_url", "display_id")}
-    if cookie_file is not None and config_dir is not None:
+    if selected_account is not None:
+        actual_status = cookie_profile_status(cookie_file)
+        raw["account_id"] = selected_account.id
+        raw["account_label"] = selected_account.label
+        raw["cookie_profile"] = selected_account.platform
+        raw["cookie_expiry_status"] = actual_status.state
+        raw["cookie_login_status"] = selected_account.state
+        raw["cookie_status"] = "account_verified"
+    elif cookie_file is not None and config_dir is not None:
         actual_profile = next(
             (profile for profile in ("default", "bilibili", "youtube") if cookie_file_path(config_dir, profile) == cookie_file),
             requested_profile,

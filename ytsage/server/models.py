@@ -33,6 +33,7 @@ class SubtitleInfo(BaseModel):
 class AnalyzeRequest(BaseModel):
     url: str
     generic_mode: bool = True
+    account_id: str | None = None
 
 
 class PlaylistEntry(BaseModel):
@@ -76,6 +77,7 @@ class CreateTaskRequest(BaseModel):
     proxy_url: str | None = None
     concurrent_fragments: int | None = Field(default=None, ge=1, le=16)
     cookie_file: str | None = None
+    account_id: str | None = None
     playlist_items: str | None = None
     playlist_title: str | None = None
     playlist_entries: list[PlaylistEntry] = Field(default_factory=list)
@@ -141,6 +143,7 @@ class HistoryListResponse(BaseModel):
 class PlaylistMonitorCreate(BaseModel):
     url: str
     interval_minutes: int = Field(default=60, ge=5, le=10080)
+    account_id: str | None = None
     download_options: CreateTaskRequest
 
 
@@ -152,6 +155,7 @@ class PlaylistMonitorUpdate(BaseModel):
 class PlaylistMonitorResponse(BaseModel):
     id: str
     url: str
+    account_id: str | None = None
     title: str | None = None
     enabled: bool
     interval_minutes: int
@@ -219,6 +223,93 @@ class CookieSaveResponse(BaseModel):
     cookies_configured: bool
     profile: str = "default"
     status: CookieProfileStatus | None = None
+
+
+Platform = Literal["bilibili"]
+AccountState = Literal["valid", "invalid", "unknown", "expired"]
+AccountResourceType = Literal["created_favorite", "collected_favorite", "watch_later", "collection", "series"]
+
+
+class AccountCreateRequest(BaseModel):
+    platform: Platform = "bilibili"
+    label: str = Field(min_length=1, max_length=80)
+    cookie_content: str = Field(max_length=2_000_000)
+    make_default: bool = False
+
+
+class AccountUpdateRequest(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=80)
+    cookie_content: str | None = Field(default=None, max_length=2_000_000)
+    make_default: bool | None = None
+
+
+class PlatformAccount(BaseModel):
+    id: str
+    platform: Platform
+    label: str
+    external_id: str | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+    vip_type: int | None = None
+    state: AccountState = "unknown"
+    cookie_filename: str
+    is_default: bool = False
+    last_verified_at: str | None = None
+    last_error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class AccountResponse(BaseModel):
+    id: str
+    platform: Platform
+    label: str
+    external_id: str | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+    vip_type: int | None = None
+    state: AccountState
+    cookie_status: CookieProfileStatus
+    is_default: bool
+    last_verified_at: str | None = None
+    last_error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class AccountResource(BaseModel):
+    id: str
+    account_id: str
+    platform: Platform
+    resource_type: AccountResourceType
+    external_id: str
+    title: str
+    description: str | None = None
+    cover_url: str | None = None
+    owner_name: str | None = None
+    owner_id: str | None = None
+    item_count: int | None = None
+    is_private: bool = False
+    source_url: str
+    updated_at: int | None = None
+
+
+class PageInfo(BaseModel):
+    offset: int
+    limit: int
+    total: int
+    has_more: bool
+
+
+class AccountResourceListResponse(BaseModel):
+    items: list[AccountResource] = Field(default_factory=list)
+    page: PageInfo
+
+
+class AccountResourceEntriesResponse(BaseModel):
+    resource: AccountResource
+    entries: list[PlaylistEntry] = Field(default_factory=list)
+    page: PageInfo
 
 
 class FilenameTemplateSaveRequest(BaseModel):

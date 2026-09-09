@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, createApiClient } from '../api/client';
 import type { FileEntry, FileListResponse, HealthResponse, SettingsResponse, TaskEvent, TaskResponse } from '../api/types';
 import { messages, type Locale, type T } from '../i18n';
+import { AccountsPage } from '../pages/accounts/AccountsPage';
 import { FilesPage } from '../pages/files/FilesPage';
 import { HistoryPage } from '../pages/history/HistoryPage';
 import { MonitorsPage } from '../pages/monitors/MonitorsPage';
@@ -75,6 +76,7 @@ export function App() {
   }, [api, handleLoadError]);
   const refreshCurrentPage = useCallback(async () => {
     if (page === 'tasks') return loadTasks();
+    if (page === 'accounts') return loadStatus();
     if (page === 'history') {
       setHistoryRevision((current) => current + 1);
       return;
@@ -150,6 +152,7 @@ export function App() {
     <main className="main">
       <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={refreshCurrentPage} error={error} />
       {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} state={workspaceState} onState={setWorkspaceState} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
+      {page === 'accounts' && <AccountsPage api={api} t={t} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'tasks' && <TasksPage tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
       {page === 'monitors' && <MonitorsPage api={api} t={t} />}
       {page === 'history' && <HistoryPage api={api} t={t} refreshKey={historyRevision} onOpenFiles={openFilesPage} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}

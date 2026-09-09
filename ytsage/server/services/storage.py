@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ..models import CreateTaskRequest, HistoryEntry, PlaylistMonitorCreate, PlaylistMonitorResponse, TaskProgress, TaskResponse
+from ..models import CreateTaskRequest, HistoryEntry, PlatformAccount, PlaylistMonitorCreate, PlaylistMonitorResponse, TaskProgress, TaskResponse
 
 
 def utc_now() -> str:
@@ -88,6 +88,32 @@ class Storage:
                 """
             )
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_monitors_due ON playlist_monitors (enabled, next_check_at)")
+            monitor_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(playlist_monitors)").fetchall()}
+            if "account_id" not in monitor_columns:
+                self._conn.execute("ALTER TABLE playlist_monitors ADD COLUMN account_id TEXT")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS platform_accounts (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    external_id TEXT,
+                    display_name TEXT,
+                    avatar_url TEXT,
+                    vip_type INTEGER,
+                    state TEXT NOT NULL,
+                    cookie_filename TEXT NOT NULL,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    last_verified_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(platform, label)
+                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_platform_accounts_platform ON platform_accounts (platform, created_at)")
+            self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_accounts_default ON platform_accounts (platform) WHERE is_default = 1")
 
     def create_task(self, task_id: str, request: CreateTaskRequest) -> TaskResponse:
         now = utc_now()
@@ -199,25 +225,104 @@ class Storage:
                 (now, now),
             )
 
+    def create_account(self, account_id: str, platform: str, label: str, cookie_filename: str, make_default: bool = False) -> PlatformAccount:
+        now = utc_now()
+        with self._lock, self._conn:
+            if make_default:
+                self._conn.execute("UPDATE platform_accounts SET is_default = 0, updated_at = ? WHERE platform = ?", (now, platform))
+            self._conn.execute(
+                """
+                INSERT INTO platform_accounts (
+                    id, platform, label, state, cookie_filename, is_default, created_at, updated_at
+                ) VALUES (?, ?, ?, 'unknown', ?, ?, ?, ?)
+                """,
+                (account_id, platform, label, cookie_filename, int(make_default), now, now),
+            )
+        return self.get_account(account_id)
+
+    def get_account(self, account_id: str) -> PlatformAccount:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM platform_accounts WHERE id = ?", (account_id,)).fetchone()
+        if row is None:
+            raise KeyError(account_id)
+        return self._account_from_row(row)
+
+    def list_accounts(self, platform: str | None = None) -> list[PlatformAccount]:
+        query, values = "SELECT * FROM platform_accounts", []
+        if platform:
+            query += " WHERE platform = ?"
+            values.append(platform)
+        query += " ORDER BY is_default DESC, created_at"
+        with self._lock:
+            rows = self._conn.execute(query, values).fetchall()
+        return [self._account_from_row(row) for row in rows]
+
+    def update_account(self, account_id: str, **fields: Any) -> PlatformAccount:
+        if not fields:
+            return self.get_account(account_id)
+        allowed = {"label", "external_id", "display_name", "avatar_url", "vip_type", "state", "cookie_filename", "is_default", "last_verified_at", "last_error"}
+        if unknown := set(fields) - allowed:
+            raise ValueError(f"Unsupported account fields: {', '.join(sorted(unknown))}")
+        now = utc_now()
+        with self._lock, self._conn:
+            account = self.get_account(account_id)
+            if fields.get("is_default"):
+                self._conn.execute("UPDATE platform_accounts SET is_default = 0, updated_at = ? WHERE platform = ?", (now, account.platform))
+            fields["updated_at"] = now
+            sets = ", ".join(f"{key} = ?" for key in fields)
+            values = [int(value) if key == "is_default" else value for key, value in fields.items()]
+            cursor = self._conn.execute(f"UPDATE platform_accounts SET {sets} WHERE id = ?", [*values, account_id])
+        if cursor.rowcount == 0:
+            raise KeyError(account_id)
+        return self.get_account(account_id)
+
+    def delete_account(self, account_id: str) -> None:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM platform_accounts WHERE id = ?", (account_id,))
+        if cursor.rowcount == 0:
+            raise KeyError(account_id)
+
+    def count_account_monitors(self, account_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM playlist_monitors WHERE account_id = ?", (account_id,)).fetchone()
+        return int(row[0])
+
+    def count_account_active_tasks(self, account_id: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status IN ('queued', 'running') AND json_extract(options_json, '$.account_id') = ?",
+                (account_id,),
+            ).fetchone()
+        return int(row[0])
+
+    @staticmethod
+    def _account_from_row(row: sqlite3.Row) -> PlatformAccount:
+        return PlatformAccount(
+            id=row["id"], platform=row["platform"], label=row["label"], external_id=row["external_id"],
+            display_name=row["display_name"], avatar_url=row["avatar_url"], vip_type=row["vip_type"],
+            state=row["state"], cookie_filename=row["cookie_filename"], is_default=bool(row["is_default"]),
+            last_verified_at=row["last_verified_at"], last_error=row["last_error"], created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+
     def create_monitor(self, monitor_id: str, request: PlaylistMonitorCreate) -> PlaylistMonitorResponse:
         now = utc_now()
         options = model_to_dict(request.download_options)
         options["url"] = request.url
         with self._lock, self._conn:
             existing = self._conn.execute(
-                "SELECT id FROM playlist_monitors WHERE url = ?",
-                (request.url,),
+                "SELECT id FROM playlist_monitors WHERE url = ? AND COALESCE(account_id, '') = COALESCE(?, '')",
+                (request.url, request.account_id),
             ).fetchone()
             if existing is not None:
                 raise ValueError("This playlist is already monitored")
             self._conn.execute(
                 """
                 INSERT INTO playlist_monitors (
-                    id, url, enabled, interval_minutes, download_options_json,
+                    id, url, account_id, enabled, interval_minutes, download_options_json,
                     seen_entry_keys_json, next_check_at, created_at, updated_at
-                ) VALUES (?, ?, 1, ?, ?, '[]', ?, ?, ?)
+                ) VALUES (?, ?, ?, 1, ?, ?, '[]', ?, ?, ?)
                 """,
-                (monitor_id, request.url, request.interval_minutes, json.dumps(options), now, now, now),
+                (monitor_id, request.url, request.account_id, request.interval_minutes, json.dumps(options), now, now, now),
             )
         return self.get_monitor(monitor_id)
 
@@ -277,6 +382,7 @@ class Storage:
         return PlaylistMonitorResponse(
             id=row["id"],
             url=row["url"],
+            account_id=row["account_id"],
             title=row["title"],
             enabled=bool(row["enabled"]),
             interval_minutes=row["interval_minutes"],

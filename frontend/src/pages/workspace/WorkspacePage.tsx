@@ -1,7 +1,7 @@
 import { ChevronDown, ClipboardPaste, Download, ListVideo, LoaderCircle, Radar, Settings2, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../../api/client';
-import type { CreateTaskRequest, DownloadMode, SettingsResponse, TaskResponse } from '../../api/types';
+import type { CreateTaskRequest, DownloadMode, PlatformAccount, SettingsResponse, TaskResponse } from '../../api/types';
 import { filenameTemplatePresets } from '../../config/download';
 import type { T, TKey } from '../../i18n';
 import { AnalysisDetails } from './AnalysisDetails';
@@ -63,24 +63,37 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
   const {
     url, analysis, selectedFormat, audioFormat, videoOutputFormat, selectedSubtitleLangs,
     mergeSubtitles, saveThumbnail, saveDescription, embedChapters, audioNormalization,
-    proxyUrl, concurrentFragments, selectedPlaylistIndexes, mode,
+    proxyUrl, concurrentFragments, selectedPlaylistIndexes, mode, accountId,
   } = state;
   const update = (patch: Partial<WorkspaceState>) => onState({ ...state, ...patch });
   const previousMode = useRef(mode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
   const availableFormats = modeFormats(analysis?.formats || [], mode);
   const currentFormat = selectedFormat
     ? availableFormats.find((format) => format.format_id === selectedFormat) || null
     : mode === 'video' ? bestVideoFormat(analysis?.formats || []) : availableFormats.find((format) => format.format_id === 'bestaudio') || availableFormats[0] || null;
   const canDownload = Boolean(analysis) && !busy && !(analysis?.is_playlist && selectedPlaylistIndexes.length === 0);
+  const effectiveAccountId = /(?:^|\.)bilibili\.com|b23\.tv/i.test(url) ? accountId : null;
+
+  useEffect(() => {
+    void api.accounts().then((items) => {
+      setAccounts(items);
+      const currentAccount = items.find((item) => item.id === accountId && item.state === 'valid');
+      if (!currentAccount) {
+        const defaultAccount = items.find((item) => item.platform === 'bilibili' && item.is_default && item.state === 'valid');
+        update({ accountId: defaultAccount?.id || null, analysis: accountId ? null : analysis });
+      }
+    }).catch(() => setAccounts([]));
+  }, [api]);
 
   async function analyze() {
     setBusy(true);
     setError(null);
     try {
-      const data = await api.analyze(url.trim());
+      const data = await api.analyze(url.trim(), true, effectiveAccountId);
       update({
         url: url.trim(),
         analysis: data,
@@ -116,6 +129,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
       audio_normalization: audioNormalization,
       proxy_url: proxyUrl.trim() || null,
       concurrent_fragments: concurrentFragments,
+      account_id: effectiveAccountId,
       playlist_items: playlistItemsValue(selectedPlaylistIndexes, analysis?.playlist_count),
       playlist_title: analysis?.is_playlist ? rawText(analysis, 'collection_title') || analysis.title || null : null,
       playlist_entries: selectedPlaylistEntries(analysis, selectedPlaylistIndexes),
@@ -141,7 +155,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
     setBusy(true);
     setError(null);
     try {
-      const result = await api.createMonitor({ url, interval_minutes: 60, download_options: buildRequest() });
+      const result = await api.createMonitor({ url, interval_minutes: 60, account_id: effectiveAccountId, download_options: buildRequest() });
       onTask(result.initial_task);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -162,6 +176,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
         <button type="button" className="icon-button" onClick={() => navigator.clipboard?.readText().then(setUrl)} title={t('paste')}><ClipboardPaste aria-hidden="true" /></button>
         <button type="submit" className="primary analyze-button" disabled={!url.trim() || busy}>{busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}{busy ? t('working') : t('analyze')}</button>
       </form>
+      {!!accounts.length && <label className="workspace-account-select">{t('downloadAccount')}<select value={accountId || ''} onChange={(event) => update({ accountId: event.target.value || null, analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] })}><option value="">{t('anonymousAccount')}</option>{accounts.map((account) => <option key={account.id} value={account.id} disabled={account.state !== 'valid'}>{account.label} · {account.display_name || account.external_id || t('unverifiedAccount')}</option>)}</select></label>}
       {error && <p className="download-error">{error}</p>}
     </section>
 

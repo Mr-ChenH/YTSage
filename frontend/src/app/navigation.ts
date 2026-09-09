@@ -1,4 +1,4 @@
-import { Activity, Binoculars, Download, FolderOpen, History, MonitorPlay, Settings2, SlidersHorizontal } from 'lucide-react';
+import { Activity, Binoculars, Download, FolderOpen, History, MonitorPlay, Settings2, SlidersHorizontal, Users } from 'lucide-react';
 
 export const navItems = [
   ['workspace', Download, 'navWorkspace'],
@@ -7,6 +7,7 @@ export const navItems = [
   ['history', History, 'navHistory'],
   ['files', FolderOpen, 'navFiles'],
   ['player', MonitorPlay, 'navPlayer'],
+  ['accounts', Users, 'navAccounts'],
   ['settings', SlidersHorizontal, 'navSettings'],
   ['system', Settings2, 'navSystem'],
 ] as const;

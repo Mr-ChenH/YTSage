@@ -1,4 +1,8 @@
 import type {
+  AccountCreateRequest,
+  AccountResourceEntriesResponse,
+  AccountResourceListResponse,
+  AccountUpdateRequest,
   AnalyzeResponse,
   CookieSaveResponse,
   CreateTaskRequest,
@@ -11,6 +15,7 @@ import type {
   PlaylistMonitorCreateResponse,
   PlaylistMonitorResponse,
   PlaylistMonitorUpdate,
+  PlatformAccount,
   SettingsResponse,
   TaskEvent,
   TaskResponse,
@@ -31,6 +36,8 @@ export interface ApiClientOptions {
 
 const pendingFileRequests = new Map<string, Promise<FileListResponse>>();
 const pendingHistoryRequests = new Map<string, Promise<HistoryListResponse>>();
+const pendingAccountRequests = new Map<string, Promise<PlatformAccount[]>>();
+const pendingAccountResourceRequests = new Map<string, Promise<AccountResourceListResponse | AccountResourceEntriesResponse>>();
 
 function headers(token: string, json = false): HeadersInit {
   const result: Record<string, string> = {};
@@ -46,7 +53,11 @@ async function parseResponse<T>(response: Response): Promise<T> {
     if (text) {
       try {
         const body = JSON.parse(text) as { detail?: unknown };
-        if (body.detail) message = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+        if (body.detail) {
+          if (typeof body.detail === 'string') message = body.detail;
+          else if (typeof body.detail === 'object' && body.detail && 'message' in body.detail) message = String((body.detail as { message: unknown }).message);
+          else message = JSON.stringify(body.detail);
+        }
         else message = text;
       } catch {
         message = text;
@@ -75,11 +86,44 @@ export function createApiClient({ token }: ApiClientOptions) {
         headers: headers(token, true),
         body: JSON.stringify({ filename_template: filenameTemplate, default_video_resolution: defaultVideoResolution }),
       }).then(parseResponse<SettingsResponse>),
-    analyze: (url: string, genericMode = true) =>
+    accounts: () => {
+      const pending = pendingAccountRequests.get(token);
+      if (pending) return pending;
+      const request = fetch('/api/accounts', { headers: headers(token) }).then(parseResponse<PlatformAccount[]>).finally(() => pendingAccountRequests.delete(token));
+      pendingAccountRequests.set(token, request);
+      return request;
+    },
+    accountAvatarUrl: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/avatar${token ? `?token=${encodeURIComponent(token)}` : ''}`,
+    createAccount: (request: AccountCreateRequest) => fetch('/api/accounts', { method: 'POST', headers: headers(token, true), body: JSON.stringify(request) }).then(parseResponse<PlatformAccount>),
+    updateAccount: (accountId: string, request: AccountUpdateRequest) => fetch(`/api/accounts/${accountId}`, { method: 'PATCH', headers: headers(token, true), body: JSON.stringify(request) }).then(parseResponse<PlatformAccount>),
+    verifyAccount: (accountId: string) => fetch(`/api/accounts/${accountId}/verify`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlatformAccount>),
+    setDefaultAccount: (accountId: string) => fetch(`/api/accounts/${accountId}/default`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlatformAccount>),
+    deleteAccount: (accountId: string) => fetch(`/api/accounts/${accountId}`, { method: 'DELETE', headers: headers(token) }).then((response) => { if (!response.ok) return parseResponse<never>(response); }),
+    accountResources: (accountId: string, kind = 'created_favorite', offset = 0, limit = 20) => {
+      const params = new URLSearchParams({ kind, offset: String(offset), limit: String(limit) });
+      const url = `/api/accounts/${accountId}/resources?${params}`;
+      const key = `${token}\n${url}`;
+      const pending = pendingAccountResourceRequests.get(key) as Promise<AccountResourceListResponse> | undefined;
+      if (pending) return pending;
+      const request = fetch(url, { headers: headers(token) }).then(parseResponse<AccountResourceListResponse>).finally(() => pendingAccountResourceRequests.delete(key));
+      pendingAccountResourceRequests.set(key, request);
+      return request;
+    },
+    accountResourceEntries: (accountId: string, resourceId: string, offset = 0, limit = 20) => {
+      const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      const url = `/api/accounts/${accountId}/resources/${encodeURIComponent(resourceId)}/entries?${params}`;
+      const key = `${token}\n${url}`;
+      const pending = pendingAccountResourceRequests.get(key) as Promise<AccountResourceEntriesResponse> | undefined;
+      if (pending) return pending;
+      const request = fetch(url, { headers: headers(token) }).then(parseResponse<AccountResourceEntriesResponse>).finally(() => pendingAccountResourceRequests.delete(key));
+      pendingAccountResourceRequests.set(key, request);
+      return request;
+    },
+    analyze: (url: string, genericMode = true, accountId?: string | null) =>
       fetch('/api/analyze', {
         method: 'POST',
         headers: headers(token, true),
-        body: JSON.stringify({ url, generic_mode: genericMode }),
+        body: JSON.stringify({ url, generic_mode: genericMode, account_id: accountId || null }),
       }).then(parseResponse<AnalyzeResponse>),
     tasks: (offset = 0, limit = 100, activeOnly = false) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });

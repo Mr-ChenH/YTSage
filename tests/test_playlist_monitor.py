@@ -100,6 +100,26 @@ async def test_monitor_baseline_covers_unselected_existing_entries(tmp_path) -> 
 
 
 @pytest.mark.anyio
+async def test_monitor_propagates_account_to_analysis_and_tasks(tmp_path) -> None:
+    request = _request()
+    request.account_id = "bilibili-account"
+    analyses = []
+    task_manager = Mock()
+    task_manager.create_task = AsyncMock(return_value=TaskResponse(
+        id="task", url=request.url, mode="video", status="queued", progress=TaskProgress(),
+        created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00",
+    ))
+    service = PlaylistMonitorService(Storage(tmp_path / "tasks.db"), task_manager, lambda analysis_request: analyses.append(analysis_request) or _analysis([PlaylistEntry(index=1, id="one", url="https://example.com/one")]))
+
+    result = await service.create(request)
+    await service.check_now(result.monitor.id)
+
+    assert result.monitor.account_id == "bilibili-account"
+    assert all(item.account_id == "bilibili-account" for item in analyses)
+    assert task_manager.create_task.await_args_list[0].args[0].account_id == "bilibili-account"
+
+
+@pytest.mark.anyio
 async def test_monitor_creation_rolls_back_when_initial_task_fails(tmp_path) -> None:
     storage = Storage(tmp_path / "tasks.db")
     task_manager = Mock(create_task=AsyncMock(side_effect=RuntimeError("queue unavailable")))
