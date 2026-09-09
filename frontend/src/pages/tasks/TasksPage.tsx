@@ -1,4 +1,4 @@
-import { Ban, Check, CheckCircle2, Clock3, Copy, Download, ExternalLink, ListFilter, ListVideo, Search, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, Ban, Check, CheckCircle2, ChevronDown, Clock3, Copy, Download, ExternalLink, ListFilter, ListVideo, Play, RefreshCw, Search, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import type { TaskResponse, TaskStatus } from '../../api/types';
@@ -10,7 +10,7 @@ interface TasksPageProps {
   tasks: TaskResponse[];
   api: ApiClient;
   t: T;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   onCancel: (id: string) => Promise<void>;
 }
 
@@ -78,6 +78,11 @@ function taskTimestamp(task: TaskResponse): string {
   return task.finished_at || task.started_at || task.created_at;
 }
 
+function taskErrorSummary(error: string): string {
+  const lines = error.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.find((line) => line.includes('ERROR:')) || lines.at(-1) || error;
+}
+
 function statusIcon(status: TaskStatus) {
   if (status === 'running') return Download;
   if (status === 'queued') return Clock3;
@@ -89,18 +94,40 @@ interface TaskDetailProps {
   task: TaskResponse;
   api: ApiClient;
   t: T;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   onCancel: (id: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onResume: (id: string) => Promise<void>;
+  onRestart: (id: string) => Promise<void>;
 }
 
-function TaskDetail({ task, api, t, onChanged, onCancel, onDelete }: TaskDetailProps) {
+function TaskDetail({ task, api, t, onChanged, onCancel, onDelete, onResume, onRestart }: TaskDetailProps) {
   const counts = playlistCounts(task);
   const percent = percentFor(task, counts);
   const active = activeStatuses.has(task.status);
+  const recoverable = failedStatuses.has(task.status);
   const [copied, setCopied] = useState(false);
+  const [busyAction, setBusyAction] = useState<'resume' | 'restart' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => setCopied(false), [task.id]);
+  useEffect(() => {
+    setCopied(false);
+    setActionError(null);
+    setBusyAction(null);
+  }, [task.id]);
+
+  async function runRecovery(action: 'resume' | 'restart') {
+    setBusyAction(action);
+    setActionError(null);
+    try {
+      if (action === 'resume') await onResume(task.id);
+      else await onRestart(task.id);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   async function copyTaskUrl() {
     if (navigator.clipboard) await navigator.clipboard.writeText(task.url);
@@ -120,7 +147,7 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete }: TaskDetailP
   return <div className={`task-detail task-${task.status}`}>
     <header className="task-detail-header">
       <div className="task-detail-title"><span className={`task-status-icon ${statusTone(task.status)}`}>{(() => { const Icon = statusIcon(task.status); return <Icon aria-hidden="true" />; })()}</span><div><div className="task-title-row"><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div><p>{task.progress.status_text || statusLabel(task.status, t)}</p></div></div>
-      <div className="task-actions">{active && <button className="danger" onClick={() => void onCancel(task.id)}><Ban aria-hidden="true" />{t('cancel')}</button>}<button onClick={() => void onDelete(task.id)}><Trash2 aria-hidden="true" />{t('deleteRecord')}</button></div>
+      <div className="task-actions">{recoverable && <><button className="primary" onClick={() => void runRecovery('resume')} disabled={busyAction !== null}><Play aria-hidden="true" />{busyAction === 'resume' ? t('working') : t('resumeTask')}</button><button onClick={() => void runRecovery('restart')} disabled={busyAction !== null}><RefreshCw aria-hidden="true" />{busyAction === 'restart' ? t('working') : t('restartTask')}</button></>}{active && <button className="danger" onClick={() => void onCancel(task.id)}><Ban aria-hidden="true" />{t('cancel')}</button>}<button onClick={() => void onDelete(task.id)}><Trash2 aria-hidden="true" />{t('deleteRecord')}</button></div>
     </header>
 
     <div className="task-detail-progress"><div><strong>{Math.round(percent)}%</strong><span>{counts ? `${counts.completed} / ${counts.total} ${t('taskItems')}` : formatBytes(task.progress.downloaded_bytes)}</span></div><div className="task-progress-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${percent}%` }} /></div></div>
@@ -140,7 +167,8 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete }: TaskDetailP
     </div>
     {task.progress.current_filename && <div className="task-detail-file"><span>{t('currentFile')}</span><strong>{task.progress.current_filename}</strong></div>}
     <TaskPlaylist task={task} api={api} t={t} onChanged={onChanged} />
-    {task.error && <div className="task-error"><strong>{t('taskError')}</strong><pre>{task.error}</pre></div>}
+    {actionError && <div className="task-action-error">{actionError}</div>}
+    {task.error && <details className="task-error"><summary title={t('expand')}><span><AlertTriangle aria-hidden="true" /><strong>{t('taskError')}</strong></span><small>{taskErrorSummary(task.error)}</small><ChevronDown aria-hidden="true" /></summary><pre>{task.error}</pre></details>}
     <div className="task-detail-id"><span>{t('taskId')}</span><code>{task.id}</code></div>
   </div>;
 }
@@ -153,6 +181,15 @@ export function TasksPage({ tasks, api, t, onChanged, onCancel }: TasksPageProps
   async function deleteTask(id: string) {
     await api.deleteTask(id);
     onChanged();
+  }
+  async function resumeTask(id: string) {
+    await api.resumeTask(id);
+    await onChanged();
+  }
+  async function restartTask(id: string) {
+    const restarted = await api.restartTask(id);
+    await onChanged();
+    setSelectedId(restarted.id);
   }
   async function clearTasks() {
     if (!window.confirm(t('confirmClearTasks'))) return;
@@ -196,7 +233,7 @@ export function TasksPage({ tasks, api, t, onChanged, onCancel }: TasksPageProps
           <span className="task-queue-copy"><span><strong title={taskTitle(task)}>{taskTitle(task)}</strong><small>{new Date(taskTimestamp(task)).toLocaleString()}</small></span><span className="task-queue-meta"><span>{taskSource(task)}</span><span>{Math.round(percent)}%</span>{taskCounts ? <span><ListVideo aria-hidden="true" />{taskCounts.completed}/{taskCounts.total}</span> : task.status === 'running' && task.progress.speed && <span>{task.progress.speed}</span>}</span><span className="task-queue-progress"><span style={{ width: `${percent}%` }} /></span></span>
         </button>;
       })}</div>
-      {selectedTask && <TaskDetail task={selectedTask} api={api} t={t} onChanged={onChanged} onCancel={onCancel} onDelete={deleteTask} />}
+      {selectedTask && <TaskDetail task={selectedTask} api={api} t={t} onChanged={onChanged} onCancel={onCancel} onDelete={deleteTask} onResume={resumeTask} onRestart={restartTask} />}
     </div>}
   </div>;
 }

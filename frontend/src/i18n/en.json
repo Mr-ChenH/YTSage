@@ -169,6 +169,8 @@
   "confirmClearTasks": "Clear finished task records? Running and queued tasks will be kept.",
   "confirmClearHistory": "Clear all history records? Downloaded files will not be deleted.",
   "cancel": "Cancel",
+  "resumeTask": "Resume task",
+  "restartTask": "Restart",
   "openFiles": "Open Files",
   "redownload": "Redownload",
   "retryItem": "Retry",

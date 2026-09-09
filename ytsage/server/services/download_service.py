@@ -13,6 +13,7 @@ from .dependencies import ffmpeg_location_arg, ytdlp_base_command
 _PROGRESS_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
 _SPEED_RE = re.compile(r"\bat\s+(?P<speed>\S+/s)\b")
 _ETA_RE = re.compile(r"\bETA\s+(?P<eta>\S+)")
+_SIZE_RE = re.compile(r"\bof\s+~?\s*(?P<size>\d+(?:\.\d+)?)(?P<unit>[KMGTP]?i?B)\b", re.IGNORECASE)
 _DEST_RE = re.compile(r"\[download\]\s+Destination:\s+(?P<path>.+)")
 _MERGE_RE = re.compile(r"\[Merger\]\s+Merging formats into\s+\"(?P<path>.+)\"")
 _PLAYLIST_ITEM_RE = re.compile(r"\[download\]\s+Downloading item\s+(?P<index>\d+)\s+of\s+(?P<total>\d+)")
@@ -111,6 +112,13 @@ def build_download_command(
     return cmd
 
 
+def _size_bytes(value: str, unit: str) -> int:
+    normalized = unit.lower()
+    prefixes = {"b": 0, "kb": 1, "kib": 1, "mb": 2, "mib": 2, "gb": 3, "gib": 3, "tb": 4, "tib": 4, "pb": 5, "pib": 5}
+    base = 1024 if "i" in normalized else 1000
+    return round(float(value) * base ** prefixes[normalized])
+
+
 def parse_progress_line(line: str, current: TaskProgress | None = None) -> TaskProgress:
     progress = current or TaskProgress()
     stripped = line.strip()
@@ -148,6 +156,10 @@ def parse_progress_line(line: str, current: TaskProgress | None = None) -> TaskP
             progress.speed = speed.group("speed")
         if eta:
             progress.eta = eta.group("eta")
+        size = _SIZE_RE.search(line)
+        if size:
+            progress.total_bytes = _size_bytes(size.group("size"), size.group("unit"))
+            progress.downloaded_bytes = round(progress.total_bytes * progress.percent / 100)
         progress.status_text = line.strip()
         return progress
 

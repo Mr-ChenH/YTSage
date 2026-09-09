@@ -38,6 +38,8 @@ def test_progress_line_extracts_download_speed_and_eta() -> None:
     assert progress.percent == 5.8
     assert progress.speed == "119.52KiB/s"
     assert progress.eta == "02:26"
+    assert progress.total_bytes == round(44.96 * 1024 * 1024)
+    assert progress.downloaded_bytes == round(progress.total_bytes * 0.058)
 
 
 def test_progress_line_handles_mib_speed() -> None:
@@ -45,6 +47,8 @@ def test_progress_line_handles_mib_speed() -> None:
 
     assert progress.speed == "2.54MiB/s"
     assert progress.eta == "00:19"
+    assert progress.total_bytes == 100 * 1024 * 1024
+    assert progress.downloaded_bytes == 50 * 1024 * 1024
 
 
 def test_progress_line_keeps_last_speed_when_current_line_has_no_speed() -> None:

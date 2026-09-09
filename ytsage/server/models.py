@@ -89,6 +89,7 @@ class TaskProgress(BaseModel):
     eta: str | None = None
     current_filename: str | None = None
     downloaded_bytes: int | None = None
+    total_bytes: int | None = None
     playlist_current_index: int | None = None
     playlist_last_index: int | None = None
     playlist_total: int | None = None

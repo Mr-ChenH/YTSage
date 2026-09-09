@@ -136,6 +136,7 @@ export interface TaskProgress {
   eta?: string | null;
   current_filename?: string | null;
   downloaded_bytes?: number | null;
+  total_bytes?: number | null;
   playlist_current_index?: number | null;
   playlist_last_index?: number | null;
   playlist_total?: number | null;

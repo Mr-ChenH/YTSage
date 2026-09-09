@@ -112,6 +112,10 @@ export function createApiClient({ token }: ApiClientOptions) {
     }),
     cancelTask: (taskId: string) =>
       fetch(`/api/tasks/${taskId}/cancel`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
+    resumeTask: (taskId: string) =>
+      fetch(`/api/tasks/${taskId}/resume`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
+    restartTask: (taskId: string) =>
+      fetch(`/api/tasks/${taskId}/restart`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
     retryPlaylistItem: (taskId: string, playlistIndex: number) =>
       fetch(`/api/tasks/${taskId}/retry-playlist-item/${playlistIndex}`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
     deleteTask: (taskId: string) => fetch(`/api/tasks/${taskId}`, { method: 'DELETE', headers: headers(token) }).then((response) => {

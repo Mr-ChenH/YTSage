@@ -169,6 +169,8 @@
   "confirmClearTasks": "确认清空已结束的任务记录？正在运行或排队的任务会保留。",
   "confirmClearHistory": "确认清空全部历史记录？不会删除下载文件。",
   "cancel": "取消",
+  "resumeTask": "继续任务",
+  "restartTask": "重新开始",
   "openFiles": "打开文件",
   "redownload": "重新下载",
   "retryItem": "重试",

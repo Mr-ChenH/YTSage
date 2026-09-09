@@ -44,6 +44,24 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Task not found") from exc
 
+    @router.post("/tasks/{task_id}/resume", response_model=TaskResponse, dependencies=auth)
+    async def resume_task(task_id: str) -> TaskResponse:
+        try:
+            return await manager.resume_task(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Task not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/tasks/{task_id}/restart", response_model=TaskResponse, dependencies=auth)
+    async def restart_task(task_id: str) -> TaskResponse:
+        try:
+            return await manager.restart_task(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Task not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @router.post("/tasks/{task_id}/retry-playlist-item/{playlist_index}", response_model=TaskResponse, dependencies=auth)
     async def retry_playlist_item(task_id: str, playlist_index: int) -> TaskResponse:
         try:

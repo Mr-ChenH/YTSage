@@ -33,6 +33,7 @@ class TaskManager:
         self.subscribers: set[asyncio.Queue[TaskEvent]] = set()
         self.executor = DownloadExecutor(config, storage, self.processes, self._publish)
         self._workers: list[asyncio.Task[Any]] = []
+        self._claimed_tasks: set[str] = set()
         self._started = False
 
     async def start(self) -> None:
@@ -60,6 +61,35 @@ class TaskManager:
         await self.queue.put(task_id)
         await self._publish("task_created", task)
         return task
+
+    async def resume_task(self, task_id: str) -> TaskResponse:
+        task = self.storage.get_task(task_id)
+        if task.status not in {"failed", "cancelled", "interrupted"}:
+            raise ValueError(f"Task in {task.status} state cannot be resumed")
+        progress = self._copy_progress(task.progress)
+        progress.speed = None
+        progress.eta = None
+        progress.playlist_current_index = None
+        if self._playlist_entries(task):
+            progress.playlist_failed_indexes = []
+            progress.playlist_failures = {}
+        progress.status_text = "Resume queued"
+        resumed = self.storage.update_task(
+            task_id,
+            status="queued",
+            progress=progress,
+            error=None,
+            finished_at=None,
+        )
+        await self.queue.put(task_id)
+        await self._publish("task_resumed", resumed)
+        return resumed
+
+    async def restart_task(self, task_id: str) -> TaskResponse:
+        task = self.storage.get_task(task_id)
+        if task.status in {"queued", "running"}:
+            raise ValueError(f"Task in {task.status} state cannot be restarted")
+        return await self.create_task(CreateTaskRequest(**task.options))
 
     async def retry_playlist_item(self, task_id: str, playlist_index: int) -> TaskResponse:
         task = self.storage.get_task(task_id)
@@ -129,13 +159,19 @@ class TaskManager:
                 self.queue.task_done()
                 continue
             try:
-                if task.status == "cancelled":
+                if task.status != "queued":
                     continue
+                if task_id in self._claimed_tasks:
+                    await asyncio.sleep(0.05)
+                    await self.queue.put(queue_item)
+                    continue
+                self._claimed_tasks.add(task_id)
                 if retry_index is None:
                     await self._run_task(task)
                 else:
                     await self._retry_playlist_item(task, retry_index)
             finally:
+                self._claimed_tasks.discard(task_id)
                 self.queue.task_done()
 
     async def _run_task(self, task: TaskResponse) -> None:
@@ -208,6 +244,11 @@ class TaskManager:
             progress.playlist_last_index = entry.index
             progress.playlist_total = len(entries)
             progress.percent = None
+            progress.speed = None
+            progress.eta = None
+            progress.current_filename = None
+            progress.downloaded_bytes = None
+            progress.total_bytes = None
             completed_count = len(progress.playlist_completed_indexes)
             progress.status_text = f"Downloading playlist item {completed_count + 1} of {len(entries)}"
 
@@ -265,6 +306,11 @@ class TaskManager:
         progress = self._copy_progress(task.progress)
         progress.playlist_current_index = playlist_index
         progress.percent = None
+        progress.speed = None
+        progress.eta = None
+        progress.current_filename = None
+        progress.downloaded_bytes = None
+        progress.total_bytes = None
         progress.status_text = f"Retrying playlist item {playlist_index}"
         output_tail, return_code, output_path, progress = await self._execute_with_youtube_fallback(
             task,

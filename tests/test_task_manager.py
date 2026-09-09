@@ -60,6 +60,76 @@ async def test_start_requeues_tasks_left_active_by_previous_process(tmp_path: Pa
 
 
 @pytest.mark.anyio
+async def test_resume_failed_playlist_keeps_completed_items_and_requeues_failures(tmp_path: Path) -> None:
+    entries = [
+        PlaylistEntry(index=index, url=f"https://www.youtube.com/watch?v=video-{index}")
+        for index in range(1, 5)
+    ]
+    storage = Storage(tmp_path / "resume.db")
+    request = CreateTaskRequest(
+        url="https://www.youtube.com/playlist?list=playlist",
+        playlist_entries=entries,
+    )
+    task = storage.create_task("failed-playlist", request)
+    storage.update_task(
+        task.id,
+        status="failed",
+        progress=TaskProgress(
+            percent=75,
+            speed="2 MiB/s",
+            eta="00:10",
+            playlist_total=4,
+            playlist_completed_indexes=[1, 2],
+            playlist_failed_indexes=[3],
+            playlist_failures={"3": "temporary network error"},
+        ),
+        error="temporary network error",
+        finished_at="2026-01-01T00:00:00+00:00",
+    )
+    manager = TaskManager(Mock(), storage)
+    manager._publish = AsyncMock()
+
+    resumed = await manager.resume_task(task.id)
+
+    assert resumed.status == "queued"
+    assert resumed.error is None
+    assert resumed.finished_at is None
+    assert resumed.progress.playlist_completed_indexes == [1, 2]
+    assert resumed.progress.playlist_failed_indexes == []
+    assert resumed.progress.playlist_failures == {}
+    assert resumed.progress.speed is None
+    assert resumed.progress.eta is None
+    assert await manager.queue.get() == task.id
+    manager._publish.assert_awaited_once_with("task_resumed", resumed)
+
+
+@pytest.mark.anyio
+async def test_resume_rejects_active_task(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "active.db")
+    task = storage.create_task("active", CreateTaskRequest(url="https://example.com/video"))
+    manager = TaskManager(Mock(), storage)
+
+    with pytest.raises(ValueError, match="cannot be resumed"):
+        await manager.resume_task(task.id)
+
+
+@pytest.mark.anyio
+async def test_restart_finished_task_creates_fresh_task(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "restart.db")
+    original = storage.create_task("original", CreateTaskRequest(url="https://example.com/video", format_id="best"))
+    storage.update_task(original.id, status="failed", error="network error")
+    manager = TaskManager(Mock(), storage)
+    manager._publish = AsyncMock()
+
+    restarted = await manager.restart_task(original.id)
+
+    assert restarted.id != original.id
+    assert restarted.status == "queued"
+    assert restarted.options == original.options
+    assert await manager.queue.get() == restarted.id
+
+
+@pytest.mark.anyio
 async def test_recovered_playlist_skips_completed_items_and_continues_pending() -> None:
     entries = [
         PlaylistEntry(index=index, url=f"https://www.youtube.com/watch?v=video-{index}")
