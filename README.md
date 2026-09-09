@@ -298,6 +298,15 @@ docker login
 3. 拉取最新基础镜像并构建 YTSage。
 4. 生成 `xmoli/ytsage:<版本>` 和 `xmoli/ytsage:latest` 两个标签。
 5. 将两个标签推送到 Docker Hub。
+6. 输出本地镜像的解压大小，便于和上一版本比较。
+
+Docker Hub 页面上的 `Repository size` 是仓库存储统计，不等同于拉取 `latest` 所需的单镜像大小。它可能包含旧推送遗留且尚未回收的层，并存在统计延迟。即使仓库只剩 `latest` 标签，删除旧标签后旧层也不一定立即从该数字中消失。检查当前镜像时，以本地 `docker image inspect` 和拉取日志为准：
+
+```bash
+docker pull xmoli/ytsage:latest
+docker image inspect xmoli/ytsage:latest --format '{{.Size}}'
+docker history xmoli/ytsage:latest
+```
 
 正式执行前可以预览命令：
 

@@ -1,3 +1,6 @@
+FROM mwader/static-ffmpeg:7.1 AS ffmpeg
+FROM denoland/deno:bin-2.5.6 AS deno
+
 FROM node:22-bookworm-slim AS ui
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -16,10 +19,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YTSAGE_AUTO_INSTALL_DEPS=0
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu unzip \
-    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
-    && deno --version \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu unzip \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /ffprobe /usr/local/bin/ffprobe
+COPY --from=deno /deno /usr/local/bin/deno
+RUN ffmpeg -version \
+    && ffprobe -version \
+    && deno --version
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./

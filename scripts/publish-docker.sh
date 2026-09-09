@@ -130,6 +130,12 @@ run docker build --pull \
 run docker push "$version_image"
 run docker push "$latest_image"
 
+if (( ! DRY_RUN )); then
+    image_size="$(docker image inspect "$latest_image" --format '{{.Size}}')"
+    image_size_mb="$((image_size / 1024 / 1024))"
+    log "本地镜像解压大小：${image_size_mb} MiB（Docker Hub 仓库存储统计还包含旧层，且可能延迟更新）"
+fi
+
 if (( DRY_RUN )); then
     log "预演完成，未构建或推送镜像"
 else
