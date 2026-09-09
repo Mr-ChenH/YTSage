@@ -240,8 +240,19 @@ class HealthResponse(BaseModel):
     auth_configured: bool
 
 
+class DependencyStatusResponse(BaseModel):
+    name: str
+    current_version: str | None = None
+    latest_version: str | None = None
+    update_available: bool = False
+    managed: bool = True
+    source: str | None = None
+    error: str | None = None
+
+
 class DependencyUpdateResponse(BaseModel):
-    yt_dlp: str
-    ffmpeg: str
-    yt_dlp_version: str | None = None
-    ffmpeg_version: str | None = None
+    running: bool = False
+    phase: str = "idle"
+    dependencies: list[DependencyStatusResponse] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+    error: str | None = None

@@ -12,11 +12,22 @@ export interface HealthResponse {
   auth_configured: boolean;
 }
 
+export interface DependencyStatus {
+  name: string;
+  current_version?: string | null;
+  latest_version?: string | null;
+  update_available: boolean;
+  managed: boolean;
+  source?: string | null;
+  error?: string | null;
+}
+
 export interface DependencyUpdateResponse {
-  yt_dlp: string;
-  ffmpeg: string;
-  yt_dlp_version?: string | null;
-  ffmpeg_version?: string | null;
+  running: boolean;
+  phase: 'idle' | 'checking' | 'ready' | 'updating' | 'completed' | 'failed';
+  dependencies: DependencyStatus[];
+  logs: string[];
+  error?: string | null;
 }
 
 export type CookieState = 'not_configured' | 'valid' | 'session' | 'expiring' | 'expired' | 'invalid';

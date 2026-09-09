@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ..config import ServerConfig
 from ..models import CookieSaveRequest, CookieSaveResponse, DependencyUpdateResponse, FilenameTemplateSaveRequest, HealthResponse, SettingsResponse
 from ..services.cookies import clear_cookie_login_status, configured_cookie_profiles, cookie_file_path, cookie_profile_status, cookie_profile_statuses, normalize_cookie_profile, normalize_cookies
-from ..services.dependencies import ffmpeg_version, update_runtime_dependencies, ytdlp_version
+from ..services.dependencies import ffmpeg_version, ytdlp_version
+from ..services.dependency_updates import DependencyUpdateManager
 from ..services.settings import default_video_resolution, filename_template, save_default_video_resolution, save_filename_template
 
 AuthDependency = Callable[..., None]
@@ -27,6 +28,7 @@ def _is_writable(path: Path) -> bool:
 
 def create_system_router(config: ServerConfig, auth_dependency: AuthDependency) -> APIRouter:
     router = APIRouter(prefix="/api", dependencies=[Depends(auth_dependency)])
+    dependency_updates = DependencyUpdateManager()
 
     def settings_response() -> SettingsResponse:
         profiles = configured_cookie_profiles(config.config_dir)
@@ -39,9 +41,16 @@ def create_system_router(config: ServerConfig, auth_dependency: AuthDependency) 
         yt_dlp, ffmpeg = ytdlp_version(), ffmpeg_version()
         return HealthResponse(healthy=download_writable and config_writable and yt_dlp != "not found" and ffmpeg != "not found", download_dir_writable=download_writable, config_dir_writable=config_writable, yt_dlp=yt_dlp, ffmpeg=ffmpeg, queue_concurrency=config.queue_concurrency, auth_configured=bool(config.auth_token))
 
+    @router.get("/dependencies", response_model=DependencyUpdateResponse)
+    def dependency_status(refresh: bool = Query(default=False)) -> DependencyUpdateResponse:
+        current = dependency_updates.status()
+        if refresh or current["phase"] == "idle":
+            return DependencyUpdateResponse(**dependency_updates.start_check())
+        return DependencyUpdateResponse(**current)
+
     @router.post("/dependencies/update", response_model=DependencyUpdateResponse)
     def update_dependencies() -> DependencyUpdateResponse:
-        return DependencyUpdateResponse(**update_runtime_dependencies())
+        return DependencyUpdateResponse(**dependency_updates.start_update())
 
     @router.get("/settings", response_model=SettingsResponse)
     def settings() -> SettingsResponse:

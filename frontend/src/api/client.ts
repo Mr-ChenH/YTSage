@@ -58,6 +58,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 export function createApiClient({ token }: ApiClientOptions) {
   return {
     health: () => fetch('/api/health', { headers: headers(token) }).then(parseResponse<HealthResponse>),
+    dependencyStatus: (refresh = false) => fetch(`/api/dependencies${refresh ? '?refresh=true' : ''}`, { headers: headers(token) }).then(parseResponse<DependencyUpdateResponse>),
     updateDependencies: () => fetch('/api/dependencies/update', { method: 'POST', headers: headers(token) }).then(parseResponse<DependencyUpdateResponse>),
     settings: () => fetch('/api/settings', { headers: headers(token) }).then(parseResponse<SettingsResponse>),
     saveCookies: (content: string, profile = 'default') =>
