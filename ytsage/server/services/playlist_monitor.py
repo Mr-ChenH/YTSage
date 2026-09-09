@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from typing import Callable
 
-from ..models import AnalyzeRequest, AnalyzeResponse, CreateTaskRequest, PlaylistEntry, PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorResponse
+from ..models import AnalyzeRequest, AnalyzeResponse, CreateTaskRequest, PageInfo, PlaylistEntry, PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorLogListResponse, PlaylistMonitorResponse
 from .storage import Storage, utc_now
 from .task_manager import TaskManager
 
@@ -31,6 +31,12 @@ class PlaylistMonitorService:
 
     async def start(self) -> None:
         if self._runner is None:
+            for monitor in self.storage.list_monitors():
+                _logs, total = self.storage.list_monitor_logs(monitor.id, limit=1)
+                if total == 0:
+                    self.storage.append_monitor_log(
+                        monitor.id, "logging_enabled", "Run logging enabled for this existing monitor."
+                    )
             self._runner = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -54,7 +60,11 @@ class PlaylistMonitorService:
         initial_request.url = request.url
         initial_request.account_id = account_id
         if not initial_request.playlist_entries:
-            initial_request.playlist_entries = analysis.playlist_entries
+            initial_request.playlist_entries = [entry for entry in analysis.playlist_entries if entry.is_available]
+        else:
+            initial_request.playlist_entries = [entry for entry in initial_request.playlist_entries if entry.is_available]
+        if not initial_request.playlist_entries:
+            raise ValueError("The collection contains no downloadable entries")
         initial_request.playlist_items = None
         normalized.download_options.playlist_entries = []
         normalized.download_options.playlist_items = None
@@ -72,6 +82,10 @@ class PlaylistMonitorService:
             )
             task = await self.task_manager.create_task(initial_request)
             monitor = self.storage.update_monitor(monitor.id, last_task_id=task.id)
+            self.storage.append_monitor_log(
+                monitor.id, "monitor_created", "Monitor initialized and initial download queued.",
+                details={"known_items": len(current_keys), "new_items": len(initial_request.playlist_entries), "task_id": task.id},
+            )
         except Exception:
             if task is not None:
                 try:
@@ -86,6 +100,13 @@ class PlaylistMonitorService:
     def list(self) -> list[PlaylistMonitorResponse]:
         return self.storage.list_monitors()
 
+    def list_logs(self, monitor_id: str, offset: int = 0, limit: int = 50) -> PlaylistMonitorLogListResponse:
+        items, total = self.storage.list_monitor_logs(monitor_id, limit=limit, offset=offset)
+        return PlaylistMonitorLogListResponse(
+            items=items,
+            page=PageInfo(offset=offset, limit=limit, total=total, has_more=offset + len(items) < total),
+        )
+
     def update(self, monitor_id: str, enabled: bool | None, interval_minutes: int | None) -> PlaylistMonitorResponse:
         monitor = self.storage.get_monitor(monitor_id)
         fields: dict[str, object] = {}
@@ -97,6 +118,10 @@ class PlaylistMonitorService:
             monitor_id,
             interval_minutes or monitor.interval_minutes,
             **fields,
+        )
+        self.storage.append_monitor_log(
+            monitor_id, "settings_updated", "Monitor settings updated.",
+            details={"enabled": updated.enabled, "interval_minutes": updated.interval_minutes},
         )
         self._wake.set()
         return updated
@@ -111,12 +136,13 @@ class PlaylistMonitorService:
         self._checking.add(monitor_id)
         try:
             monitor = self.storage.get_monitor(monitor_id)
+            self.storage.append_monitor_log(monitor.id, "check_started", "Checking collection for updates.")
             analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=monitor.url, account_id=monitor.account_id))
             if not analysis.is_playlist or not analysis.playlist_entries:
                 raise ValueError("URL did not resolve to a playlist or collection")
             current_keys = [playlist_entry_key(entry) for entry in analysis.playlist_entries]
             seen = set(monitor.seen_entry_keys)
-            new_entries = [entry for entry in analysis.playlist_entries if playlist_entry_key(entry) not in seen]
+            new_entries = [entry for entry in analysis.playlist_entries if entry.is_available and playlist_entry_key(entry) not in seen]
             merged_keys = [*monitor.seen_entry_keys, *(key for key in current_keys if key not in seen)]
             task_id: str | None = None
             # The first successful check establishes a baseline. Future checks download only additions.
@@ -132,6 +158,12 @@ class PlaylistMonitorService:
                 options.playlist_items = None
                 task = await self.task_manager.create_task(options)
                 task_id = task.id
+            self.storage.append_monitor_log(
+                monitor.id,
+                "new_entries" if new_entries else "no_updates",
+                "New entries found and download queued." if new_entries else "Check completed with no new entries.",
+                details={"known_items": len(current_keys), "new_items": len(new_entries), "task_id": task_id},
+            )
             return self.storage.schedule_next_monitor_check(
                 monitor.id,
                 monitor.interval_minutes,
@@ -143,6 +175,9 @@ class PlaylistMonitorService:
             )
         except Exception as exc:
             monitor = self.storage.get_monitor(monitor_id)
+            self.storage.append_monitor_log(
+                monitor.id, "check_failed", str(exc) or "Monitor check failed.", level="error",
+            )
             return self.storage.schedule_next_monitor_check(
                 monitor.id,
                 monitor.interval_minutes,

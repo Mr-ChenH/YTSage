@@ -10,9 +10,10 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 
 from ytsage.server.api.accounts import _fetch_avatar
-from ytsage.server.models import AccountCreateRequest, AccountUpdateRequest, PlaylistMonitorCreate, CreateTaskRequest
+from ytsage.server.models import AccountCreateRequest, AccountUpdateRequest, CreateTaskRequest, PlaylistEntry, PlaylistMonitorCreate
 from ytsage.server.providers.bilibili import BilibiliIdentity, BilibiliProvider, BilibiliProviderError
 from ytsage.server.services.accounts import AccountConflictError, AccountService
+from ytsage.server.services.analyzer import _playlist_entry
 from ytsage.server.services.storage import Storage
 from ytsage.server.services.task_manager import TaskManager
 
@@ -194,6 +195,43 @@ def test_bilibili_provider_paginates_favorite_entries(tmp_path: Path):
     assert page.entries[0].index == 21
     assert page.entries[0].url == "https://www.bilibili.com/video/BV123"
     assert http.calls[0][1]["params"]["pn"] == 2
+
+
+def test_flat_playlist_marks_invalid_video_unavailable():
+    entry = _playlist_entry(1, {"id": "BVinvalid", "url": "BVinvalid", "title": "[已失效视频]", "attr": 1})
+
+    assert entry.is_available is False
+    assert entry.url is None
+
+
+def test_bilibili_provider_marks_invalid_favorite_video_unavailable(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(COOKIE, encoding="utf-8")
+    http = FakeHttp([{"code": 0, "data": {"info": {"id": 11, "media_count": 1}, "medias": [
+        {"id": 9, "bvid": "BVinvalid", "title": "已失效视频", "attr": 9},
+    ]}}])
+    provider = BilibiliProvider(http=http)
+    account = Storage(tmp_path / "server.db").create_account("account", "bilibili", "A", "accounts/account/cookies.txt")
+    account = account.model_copy(update={"external_id": "1001"})
+
+    entry = provider.list_entries(account, cookie, "created_favorite:11", 0, 20).entries[0]
+
+    assert entry.is_available is False
+    assert entry.url is None
+    assert entry.webpage_url is None
+    assert entry.unavailable_reason
+
+
+@pytest.mark.anyio
+async def test_task_creation_rejects_unavailable_playlist_entries(tmp_path: Path):
+    manager = TaskManager(Mock(config_dir=tmp_path), Storage(tmp_path / "server.db"))
+    request = CreateTaskRequest(
+        url="https://www.bilibili.com/list/watchlater",
+        playlist_entries=[PlaylistEntry(index=1, id="BVinvalid", is_available=False)],
+    )
+
+    with pytest.raises(ValueError, match="Unavailable playlist entries"):
+        await manager.create_task(request)
 
 
 @pytest.mark.anyio

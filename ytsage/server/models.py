@@ -45,6 +45,8 @@ class PlaylistEntry(BaseModel):
     duration: float | None = None
     channel: str | None = None
     thumbnail_url: str | None = None
+    is_available: bool = True
+    unavailable_reason: str | None = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -299,6 +301,21 @@ class PageInfo(BaseModel):
     limit: int
     total: int
     has_more: bool
+
+
+class PlaylistMonitorLog(BaseModel):
+    id: int
+    monitor_id: str
+    timestamp: str
+    level: str = "info"
+    event: str
+    message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaylistMonitorLogListResponse(BaseModel):
+    items: list[PlaylistMonitorLog] = Field(default_factory=list)
+    page: PageInfo
 
 
 class AccountResourceListResponse(BaseModel):

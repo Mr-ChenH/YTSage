@@ -22,6 +22,21 @@ def test_history_search_filters_and_paginates(tmp_path: Path) -> None:
     assert total == 2
 
 
+def test_storage_repairs_existing_playlist_history_titles(tmp_path: Path) -> None:
+    database = tmp_path / "history-repair.db"
+    storage = Storage(database)
+    request = CreateTaskRequest(url="https://example.com/playlist", playlist_title="Full course")
+    storage.create_task("playlist-task", request)
+    storage.add_history(HistoryEntry(
+        id="history", task_id="playlist-task", title="Last lesson", output_path="downloads/last.mp4",
+        media_type="video", status="completed", downloaded_at="2026-01-01T00:00:00+00:00",
+    ))
+
+    repaired = Storage(database).get_history("history")
+
+    assert repaired.title == "Full course"
+
+
 def _task(entries: list[PlaylistEntry]) -> TaskResponse:
     request = CreateTaskRequest(
         url="https://www.youtube.com/playlist?list=playlist",
@@ -39,6 +54,54 @@ def _task(entries: list[PlaylistEntry]) -> TaskResponse:
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
     )
+
+
+def test_playlist_history_uses_collection_directory_and_statistics(tmp_path: Path) -> None:
+    download_root = tmp_path / "downloads"
+    collection_dir = download_root / "Course"
+    collection_dir.mkdir(parents=True)
+    output = collection_dir / "last-lesson.mp4"
+    output.write_bytes(b"video")
+    (collection_dir / "first-lesson.mp4").write_bytes(b"first-video")
+    storage = Storage(tmp_path / "playlist-history.db")
+    task = _task([
+        PlaylistEntry(index=1, id="one", url="https://example.com/one"),
+        PlaylistEntry(index=2, id="two", url="https://example.com/two"),
+    ]).model_copy(update={"progress": TaskProgress(playlist_completed_indexes=[1, 2])})
+    manager = TaskManager(Mock(download_dir=download_root), storage)
+
+    manager._add_history_if_available(task, str(output))
+
+    history = storage.list_history()[0]
+    assert history.title == "Course"
+    assert history.output_path == str(collection_dir)
+    assert history.file_size == len(b"video") + len(b"first-video")
+    assert history.metadata["is_playlist"] is True
+    assert history.metadata["playlist_count"] == 2
+    assert history.metadata["output_is_directory"] is True
+
+
+def test_playlist_history_repair_replaces_last_file_with_collection_directory(tmp_path: Path) -> None:
+    download_root = tmp_path / "downloads"
+    collection_dir = download_root / "Course"
+    collection_dir.mkdir(parents=True)
+    output = collection_dir / "last.mp4"
+    output.write_bytes(b"video")
+    storage = Storage(tmp_path / "repair-directory.db")
+    task = _task([PlaylistEntry(index=1, id="one", url="https://example.com/one")])
+    storage.create_task(task.id, CreateTaskRequest(**task.options))
+    storage.add_history(HistoryEntry(
+        id="history", task_id=task.id, title="last", output_path=str(output), file_size=5,
+        media_type="video", status="completed", downloaded_at="2026-01-01T00:00:00+00:00",
+    ))
+    manager = TaskManager(Mock(download_dir=download_root), storage)
+
+    manager._repair_playlist_history()
+
+    repaired = storage.get_history("history")
+    assert repaired.output_path == str(collection_dir)
+    assert repaired.metadata["output_is_directory"] is True
+    assert repaired.metadata["playlist_count"] == 1
 
 
 @pytest.mark.anyio

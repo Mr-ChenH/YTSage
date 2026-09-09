@@ -44,6 +44,7 @@ class TaskManager:
     async def start(self) -> None:
         if self._started:
             return
+        self._repair_playlist_history()
         recovered_tasks = self.storage.recover_interrupted_tasks()
         self._started = True
         for task in recovered_tasks:
@@ -61,6 +62,8 @@ class TaskManager:
         self._started = False
 
     async def create_task(self, request: CreateTaskRequest) -> TaskResponse:
+        if any(not entry.is_available for entry in request.playlist_entries):
+            raise ValueError("Unavailable playlist entries cannot be downloaded.")
         if request.cookie_file:
             supplied = Path(request.cookie_file).resolve()
             allowed = {cookie_file_path(self.config.config_dir, profile).resolve() for profile in COOKIE_PROFILES}
@@ -111,6 +114,8 @@ class TaskManager:
         entry = next((item for item in entries if item.index == playlist_index), None)
         if entry is None:
             raise KeyError(f"playlist item {playlist_index} not found")
+        if not entry.is_available:
+            raise ValueError("Unavailable playlist entries cannot be retried.")
         progress = self._copy_progress(task.progress)
         if not progress.playlist_completed_indexes and progress.playlist_last_index:
             progress.playlist_completed_indexes = [
@@ -416,24 +421,80 @@ class TaskManager:
     def _copy_progress(self, progress: TaskProgress) -> TaskProgress:
         return copy_progress(progress)
 
+    def _playlist_history_details(self, task: TaskResponse, path: Path) -> tuple[str, Path, int, str, dict[str, Any]]:
+        playlist_title = task.options.get("playlist_title")
+        is_playlist = isinstance(playlist_title, str) and bool(playlist_title.strip())
+        entries = task.options.get("playlist_entries")
+        completed_count = len(task.progress.playlist_completed_indexes)
+        playlist_count = completed_count or task.progress.playlist_total or (len(entries) if isinstance(entries, list) else 0)
+        output = path
+        template = task.options.get("filename_template")
+        download_root = getattr(self.config, "download_dir", None)
+        if is_playlist and isinstance(template, str) and "%(playlist_title)" in template and isinstance(download_root, Path):
+            candidate = path if path.is_dir() else path.parent
+            try:
+                candidate.resolve().relative_to(download_root.resolve())
+                if candidate.resolve() != download_root.resolve():
+                    output = candidate
+            except ValueError:
+                pass
+        if output.is_dir():
+            files = [item for item in output.rglob("*") if item.is_file()]
+            file_size = sum(item.stat().st_size for item in files)
+            media_type = {"video": "video", "audio": "audio", "subtitles": "subtitle"}.get(task.mode, "other")
+        else:
+            file_size = output.stat().st_size
+            media_type = classify_file(output)
+        metadata = {
+            "mode": task.mode,
+            "is_playlist": is_playlist,
+            "playlist_count": playlist_count,
+            "output_is_directory": output.is_dir(),
+        }
+        title = playlist_title.strip() if is_playlist else path.stem
+        return title, output, file_size, media_type, metadata
+
+    def _repair_playlist_history(self) -> None:
+        if not isinstance(getattr(self.config, "download_dir", None), Path):
+            return
+        for history in self.storage.list_history(limit=100_000):
+            if not history.task_id:
+                continue
+            try:
+                task = self.storage.get_task(history.task_id)
+                path = Path(history.output_path or "")
+                if not path.exists() or not task.options.get("playlist_title"):
+                    continue
+                title, output, file_size, media_type, metadata = self._playlist_history_details(task, path)
+                self.storage.update_history(history.model_copy(update={
+                    "title": title,
+                    "output_path": str(output),
+                    "file_size": file_size,
+                    "media_type": media_type,
+                    "metadata": {**history.metadata, **metadata},
+                }))
+            except (KeyError, OSError):
+                continue
+
     def _add_history_if_available(self, task: TaskResponse, output_path: str | None) -> None:
         if not output_path:
             return
         path = Path(output_path)
         if not path.exists():
             return
+        title, output, file_size, media_type, metadata = self._playlist_history_details(task, path)
         self.storage.add_history(
             HistoryEntry(
                 id=uuid.uuid4().hex,
                 task_id=task.id,
                 url=task.url,
-                title=path.stem,
-                output_path=str(path),
-                file_size=path.stat().st_size,
-                media_type=classify_file(path),
+                title=title,
+                output_path=str(output),
+                file_size=file_size,
+                media_type=media_type,
                 status="completed",
                 downloaded_at=utc_now(),
-                metadata={"mode": task.mode},
+                metadata=metadata,
             )
         )
 

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from ..models import PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorResponse, PlaylistMonitorUpdate
+from ..models import PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorLogListResponse, PlaylistMonitorResponse, PlaylistMonitorUpdate
 from ..services.playlist_monitor import PlaylistMonitorService
 
 AuthDependency = Callable[..., None]
@@ -23,6 +23,17 @@ def create_monitors_router(service: PlaylistMonitorService, auth_dependency: Aut
             return await service.create(request)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/{monitor_id}/logs", response_model=PlaylistMonitorLogListResponse)
+    def list_monitor_logs(
+        monitor_id: str,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> PlaylistMonitorLogListResponse:
+        try:
+            return service.list_logs(monitor_id, offset=offset, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Monitor not found") from exc
 
     @router.patch("/{monitor_id}", response_model=PlaylistMonitorResponse)
     def update_monitor(monitor_id: str, request: PlaylistMonitorUpdate) -> PlaylistMonitorResponse:

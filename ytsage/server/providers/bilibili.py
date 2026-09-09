@@ -216,10 +216,15 @@ class BilibiliProvider:
     def _entry(item: dict[str, Any], index: int) -> PlaylistEntry:
         bvid = as_str(item.get("bvid")) or as_str(item.get("bv_id"))
         aid = as_str(item.get("id")) or as_str(item.get("aid"))
+        title = as_str(item.get("title"))
         upper = item.get("upper") if isinstance(item.get("upper"), dict) else {}
-        url = f"https://www.bilibili.com/video/{bvid}" if bvid else None
+        attr = as_int(item.get("attr")) or 0
+        unavailable = bool(attr & 1) or (title or "").strip(" []【】") == "已失效视频"
+        url = f"https://www.bilibili.com/video/{bvid}" if bvid and not unavailable else None
         return PlaylistEntry(
-            index=index, id=bvid or aid, title=as_str(item.get("title")), url=url, webpage_url=url,
+            index=index, id=bvid or aid, title=title, url=url, webpage_url=url,
             duration=as_float(item.get("duration")), channel=as_str(upper.get("name")),
             thumbnail_url=as_str(item.get("cover")) or as_str(item.get("pic")),
+            is_available=not unavailable,
+            unavailable_reason="Video is no longer available on Bilibili." if unavailable else None,
         )

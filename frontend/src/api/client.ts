@@ -13,6 +13,7 @@ import type {
   HistoryListResponse,
   PlaylistMonitorCreate,
   PlaylistMonitorCreateResponse,
+  PlaylistMonitorLogListResponse,
   PlaylistMonitorResponse,
   PlaylistMonitorUpdate,
   PlatformAccount,
@@ -151,6 +152,10 @@ export function createApiClient({ token }: ApiClientOptions) {
       }).then(parseResponse<PlaylistMonitorResponse>),
     checkMonitor: (monitorId: string) =>
       fetch(`/api/monitors/${monitorId}/check`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlaylistMonitorResponse>),
+    monitorLogs: (monitorId: string, offset = 0, limit = 50) => {
+      const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      return fetch(`/api/monitors/${monitorId}/logs?${params}`, { headers: headers(token) }).then(parseResponse<PlaylistMonitorLogListResponse>);
+    },
     deleteMonitor: (monitorId: string) => fetch(`/api/monitors/${monitorId}`, { method: 'DELETE', headers: headers(token) }).then((response) => {
       if (!response.ok) return parseResponse<never>(response);
     }),

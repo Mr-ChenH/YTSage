@@ -28,6 +28,22 @@ def _request() -> PlaylistMonitorCreate:
 
 
 @pytest.mark.anyio
+async def test_start_bootstraps_logging_for_existing_monitors_once(tmp_path) -> None:
+    storage = Storage(tmp_path / "tasks.db")
+    monitor = storage.create_monitor("monitor", _request())
+    service = PlaylistMonitorService(storage, Mock(), lambda _request: _analysis([]))
+
+    await service.start()
+    await service.stop()
+    await service.start()
+    await service.stop()
+
+    logs, total = storage.list_monitor_logs(monitor.id)
+    assert total == 1
+    assert logs[0].event == "logging_enabled"
+
+
+@pytest.mark.anyio
 async def test_monitor_downloads_current_selection_then_only_new_entries(tmp_path) -> None:
     first_entries = [PlaylistEntry(index=1, id="one", url="https://example.com/one")]
     updated_entries = [*first_entries, PlaylistEntry(index=2, id="two", url="https://example.com/two")]
@@ -56,6 +72,10 @@ async def test_monitor_downloads_current_selection_then_only_new_entries(tmp_pat
     assert monitor.download_options["playlist_items"] is None
     assert monitor.last_checked_at is not None
     assert monitor.last_task_id == "download-task"
+    created_logs, created_total = service.storage.list_monitor_logs(monitor.id)
+    assert created_total == 1
+    assert created_logs[0].event == "monitor_created"
+    assert created_logs[0].details["known_items"] == 1
 
     task_manager.create_task.reset_mock()
     checked = await service.check_now(monitor.id)
@@ -67,6 +87,41 @@ async def test_monitor_downloads_current_selection_then_only_new_entries(tmp_pat
     assert checked.seen_entry_keys == ["id:one", "id:two"]
     assert checked.last_task_id == "download-task"
     assert checked.last_error is None
+    logs, total = service.storage.list_monitor_logs(monitor.id)
+    assert total == 3
+    assert [log.event for log in logs] == ["new_entries", "check_started", "monitor_created"]
+    assert logs[0].details["new_items"] == 1
+
+
+@pytest.mark.anyio
+async def test_monitor_excludes_unavailable_entries_from_downloads(tmp_path) -> None:
+    entries = [
+        PlaylistEntry(index=1, id="one", url="https://example.com/one"),
+        PlaylistEntry(index=2, id="gone", is_available=False, unavailable_reason="Removed"),
+    ]
+    task_manager = Mock(create_task=AsyncMock(return_value=TaskResponse(
+        id="task", url="https://example.com/playlist", mode="video", status="queued", progress=TaskProgress(),
+        created_at="2026-01-01T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00",
+    )))
+    service = PlaylistMonitorService(Storage(tmp_path / "tasks.db"), task_manager, lambda _request: _analysis(entries))
+
+    result = await service.create(_request())
+
+    initial_request = task_manager.create_task.await_args.args[0]
+    assert [entry.id for entry in initial_request.playlist_entries] == ["one"]
+    assert result.monitor.seen_entry_keys == ["id:one", "id:gone"]
+
+
+@pytest.mark.anyio
+async def test_monitor_rejects_collection_with_only_unavailable_entries(tmp_path) -> None:
+    entries = [PlaylistEntry(index=1, id="gone", is_available=False, unavailable_reason="Removed")]
+    task_manager = Mock(create_task=AsyncMock())
+    service = PlaylistMonitorService(Storage(tmp_path / "tasks.db"), task_manager, lambda _request: _analysis(entries))
+
+    with pytest.raises(ValueError, match="no downloadable entries"):
+        await service.create(_request())
+
+    task_manager.create_task.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -147,6 +202,26 @@ async def test_monitor_error_keeps_baseline_and_schedules_retry(tmp_path) -> Non
     assert checked.last_checked_at is not None
     assert checked.next_check_at > checked.last_checked_at
     task_manager.create_task.assert_not_awaited()
+    logs, total = storage.list_monitor_logs(monitor.id)
+    assert total == 2
+    assert [log.event for log in logs] == ["check_failed", "check_started"]
+    assert logs[0].level == "error"
+
+
+def test_monitor_log_pagination_and_delete_cleanup(tmp_path) -> None:
+    storage = Storage(tmp_path / "tasks.db")
+    monitor = storage.create_monitor("monitor", _request())
+    for index in range(3):
+        storage.append_monitor_log(monitor.id, "check", f"Check {index}")
+
+    logs, total = storage.list_monitor_logs(monitor.id, limit=2, offset=1)
+
+    assert total == 3
+    assert [log.message for log in logs] == ["Check 1", "Check 0"]
+    storage.delete_monitor(monitor.id)
+    with pytest.raises(KeyError):
+        storage.list_monitor_logs(monitor.id)
+    assert storage._conn.execute("SELECT COUNT(*) FROM playlist_monitor_logs WHERE monitor_id = ?", (monitor.id,)).fetchone()[0] == 0
 
 
 def test_duplicate_monitor_url_is_rejected(tmp_path) -> None:

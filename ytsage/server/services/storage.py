@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ..models import CreateTaskRequest, HistoryEntry, PlatformAccount, PlaylistMonitorCreate, PlaylistMonitorResponse, TaskProgress, TaskResponse
+from ..models import CreateTaskRequest, HistoryEntry, PlatformAccount, PlaylistMonitorCreate, PlaylistMonitorLog, PlaylistMonitorResponse, TaskProgress, TaskResponse
 
 
 def utc_now() -> str:
@@ -68,6 +68,23 @@ class Storage:
                 """
             )
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_history_downloaded ON history (downloaded_at DESC)")
+            # Older playlist history rows used the final downloaded filename as their title.
+            self._conn.execute(
+                """
+                UPDATE history
+                SET title = (
+                    SELECT json_extract(tasks.options_json, '$.playlist_title')
+                    FROM tasks
+                    WHERE tasks.id = history.task_id
+                )
+                WHERE task_id IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1 FROM tasks
+                    WHERE tasks.id = history.task_id
+                      AND COALESCE(json_extract(tasks.options_json, '$.playlist_title'), '') <> ''
+                  )
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS playlist_monitors (
@@ -88,6 +105,20 @@ class Storage:
                 """
             )
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_playlist_monitors_due ON playlist_monitors (enabled, next_check_at)")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS playlist_monitor_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monitor_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_monitor_logs_monitor ON playlist_monitor_logs (monitor_id, id DESC)")
             monitor_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(playlist_monitors)").fetchall()}
             if "account_id" not in monitor_columns:
                 self._conn.execute("ALTER TABLE playlist_monitors ADD COLUMN account_id TEXT")
@@ -372,9 +403,53 @@ class Storage:
         fields["next_check_at"] = (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)).isoformat()
         return self.update_monitor(monitor_id, **fields)
 
+    def append_monitor_log(
+        self,
+        monitor_id: str,
+        event: str,
+        message: str,
+        *,
+        level: str = "info",
+        details: dict[str, Any] | None = None,
+    ) -> PlaylistMonitorLog:
+        timestamp = utc_now()
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO playlist_monitor_logs (monitor_id, timestamp, level, event, message, details_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (monitor_id, timestamp, level, event, message, json.dumps(details or {})),
+            )
+            self._conn.execute(
+                """
+                DELETE FROM playlist_monitor_logs
+                WHERE monitor_id = ? AND id NOT IN (
+                    SELECT id FROM playlist_monitor_logs WHERE monitor_id = ? ORDER BY id DESC LIMIT 1000
+                )
+                """,
+                (monitor_id, monitor_id),
+            )
+        return PlaylistMonitorLog(
+            id=int(cursor.lastrowid), monitor_id=monitor_id, timestamp=timestamp,
+            level=level, event=event, message=message, details=details or {},
+        )
+
+    def list_monitor_logs(self, monitor_id: str, limit: int = 50, offset: int = 0) -> tuple[list[PlaylistMonitorLog], int]:
+        self.get_monitor(monitor_id)
+        with self._lock:
+            total = int(self._conn.execute("SELECT COUNT(*) FROM playlist_monitor_logs WHERE monitor_id = ?", (monitor_id,)).fetchone()[0])
+            rows = self._conn.execute(
+                "SELECT * FROM playlist_monitor_logs WHERE monitor_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (monitor_id, limit, offset),
+            ).fetchall()
+        return [PlaylistMonitorLog(
+            id=row["id"], monitor_id=row["monitor_id"], timestamp=row["timestamp"], level=row["level"],
+            event=row["event"], message=row["message"], details=json.loads(row["details_json"] or "{}"),
+        ) for row in rows], total
+
     def delete_monitor(self, monitor_id: str) -> None:
         with self._lock, self._conn:
             cursor = self._conn.execute("DELETE FROM playlist_monitors WHERE id = ?", (monitor_id,))
+            if cursor.rowcount:
+                self._conn.execute("DELETE FROM playlist_monitor_logs WHERE monitor_id = ?", (monitor_id,))
         if cursor.rowcount == 0:
             raise KeyError(monitor_id)
 
@@ -418,6 +493,9 @@ class Storage:
                     json.dumps(data.get("metadata", {})),
                 ),
             )
+
+    def update_history(self, entry: HistoryEntry) -> None:
+        self.add_history(entry)
 
     def list_history(self, limit: int = 100, offset: int = 0) -> list[HistoryEntry]:
         with self._lock:

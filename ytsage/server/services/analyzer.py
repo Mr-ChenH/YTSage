@@ -98,8 +98,22 @@ def _entry_url_from_item(item: dict[str, Any]) -> str | None:
 
 
 def _playlist_entry(index: int, item: dict[str, Any]) -> PlaylistEntry:
-    entry_url = _entry_url_from_item(item)
-    return PlaylistEntry(index=index, id=_as_str(item.get("id")) or _as_str(item.get("url")), title=_as_str(item.get("title")), url=entry_url, webpage_url=entry_url, duration=_as_float(item.get("duration")), channel=_as_str(item.get("channel") or item.get("uploader")), thumbnail_url=_best_thumbnail(item))
+    title = _as_str(item.get("title"))
+    attr = int(_as_float(item.get("attr")) or 0)
+    unavailable = bool(attr & 1) or (title or "").strip(" []【】") == "已失效视频"
+    entry_url = None if unavailable else _entry_url_from_item(item)
+    return PlaylistEntry(
+        index=index,
+        id=_as_str(item.get("id")) or _as_str(item.get("url")),
+        title=title,
+        url=entry_url,
+        webpage_url=entry_url,
+        duration=_as_float(item.get("duration")),
+        channel=_as_str(item.get("channel") or item.get("uploader")),
+        thumbnail_url=_best_thumbnail(item),
+        is_available=not unavailable,
+        unavailable_reason="Video is no longer available." if unavailable else None,
+    )
 
 
 def _formats_from_single_entry(url: str | None, cookie_file: Path | None, timeout: int) -> list[FormatInfo]:

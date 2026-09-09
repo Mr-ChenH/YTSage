@@ -73,6 +73,8 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
             return await manager.retry_playlist_item(task_id, playlist_index)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Playlist item not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.delete("/tasks/{task_id}", status_code=204, dependencies=auth)
     async def delete_task(task_id: str) -> Response:

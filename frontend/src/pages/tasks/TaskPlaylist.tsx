@@ -92,7 +92,7 @@ export function TaskPlaylist({ task, api, t, onChanged }: TaskPlaylistProps) {
     return result;
   }, { pending: 0, downloading: 0, completed: 0, failed: 0 });
 
-  return <div className={`task-playlist ${expanded ? 'expanded' : ''}`}>
+  return <div className={`task-playlist ${expanded ? 'expanded' : 'collapsed'}`} style={expanded ? undefined : { minHeight: 44, maxHeight: 44, flex: '0 0 44px' }}>
     <button className="task-playlist-toggle" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
       <span><strong>{t('taskPlaylist')}</strong><small>{counts.completed} {t('itemCompleted')} · {counts.pending} {t('itemPending')}{counts.failed > 0 ? ` · ${counts.failed} ${t('itemFailed')}` : ''}</small></span>
       {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}

@@ -160,6 +160,8 @@ export interface PlaylistEntry {
   duration?: number | null;
   channel?: string | null;
   thumbnail_url?: string | null;
+  is_available?: boolean;
+  unavailable_reason?: string | null;
 }
 
 export interface AnalyzeResponse {
@@ -265,6 +267,21 @@ export interface PlaylistMonitorCreate {
 export interface PlaylistMonitorCreateResponse {
   monitor: PlaylistMonitorResponse;
   initial_task: TaskResponse;
+}
+
+export interface PlaylistMonitorLog {
+  id: number;
+  monitor_id: string;
+  timestamp: string;
+  level: string;
+  event: string;
+  message: string;
+  details: Record<string, unknown>;
+}
+
+export interface PlaylistMonitorLogListResponse {
+  items: PlaylistMonitorLog[];
+  page: PageInfo;
 }
 
 export interface PlaylistMonitorUpdate {

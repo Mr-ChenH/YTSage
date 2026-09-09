@@ -76,7 +76,8 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
     ? availableFormats.find((format) => format.format_id === selectedFormat) || null
     : mode === 'video' ? bestVideoFormat(analysis?.formats || []) : availableFormats.find((format) => format.format_id === 'bestaudio') || availableFormats[0] || null;
   const canDownload = Boolean(analysis) && !busy && !(analysis?.is_playlist && selectedPlaylistIndexes.length === 0);
-  const effectiveAccountId = /(?:^|\.)bilibili\.com|b23\.tv/i.test(url) ? accountId : null;
+  const isBilibiliUrl = /(?:^|\.)bilibili\.com|b23\.tv/i.test(url);
+  const effectiveAccountId = isBilibiliUrl ? accountId : null;
 
   useEffect(() => {
     void api.accounts().then((items) => {
@@ -89,14 +90,16 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
     }).catch(() => setAccounts([]));
   }, [api]);
 
-  async function analyze() {
+  async function analyze(accountOverride: string | null = effectiveAccountId) {
     setBusy(true);
     setError(null);
     try {
-      const data = await api.analyze(url.trim(), true, effectiveAccountId);
+      const nextAccountId = isBilibiliUrl ? accountOverride : null;
+      const data = await api.analyze(url.trim(), true, nextAccountId);
       update({
         url: url.trim(),
         analysis: data,
+        accountId: nextAccountId,
         selectedFormat: preferredFormatForMode(data.formats, mode, settings?.default_video_resolution || 'best'),
         selectedPlaylistIndexes: data.playlist_entries.map((entry) => entry.index),
         selectedSubtitleLangs: [],
@@ -176,7 +179,6 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
         <button type="button" className="icon-button" onClick={() => navigator.clipboard?.readText().then(setUrl)} title={t('paste')}><ClipboardPaste aria-hidden="true" /></button>
         <button type="submit" className="primary analyze-button" disabled={!url.trim() || busy}>{busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}{busy ? t('working') : t('analyze')}</button>
       </form>
-      {!!accounts.length && <label className="workspace-account-select">{t('downloadAccount')}<select value={accountId || ''} onChange={(event) => update({ accountId: event.target.value || null, analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] })}><option value="">{t('anonymousAccount')}</option>{accounts.map((account) => <option key={account.id} value={account.id} disabled={account.state !== 'valid'}>{account.label} · {account.display_name || account.external_id || t('unverifiedAccount')}</option>)}</select></label>}
       {error && <p className="download-error">{error}</p>}
     </section>
 
@@ -189,6 +191,8 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
       <aside className="download-plan">
         <header><div><span>{t('downloadPlan')}</span><h2>{analysis.is_playlist ? t('playlistDownload') : t('singleDownload')}</h2></div>{analysis.is_playlist ? <ListVideo aria-hidden="true" /> : <Download aria-hidden="true" />}</header>
         <div className="download-mode segmented">{(['video', 'audio', 'subtitles'] as DownloadMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => update({ mode: item })}>{modeLabel(item, t)}</button>)}</div>
+
+        {isBilibiliUrl && !!accounts.length && <label className="workspace-account-select">{t('downloadAccount')}<select value={accountId || ''} disabled={busy} onChange={(event) => void analyze(event.target.value || null)}><option value="">{t('anonymousAccount')}</option>{accounts.map((account) => <option key={account.id} value={account.id} disabled={account.state !== 'valid'}>{account.label} · {account.display_name || account.external_id || t('unverifiedAccount')}</option>)}</select></label>}
 
         <div className="plan-section">
           <div className="plan-heading"><span>{t('qualityAndFormat')}</span>{selectedFormat && <span className="badge blue">{t('manualFormatSelection')}</span>}</div>
