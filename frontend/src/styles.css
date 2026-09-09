@@ -842,6 +842,174 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .detail-row { grid-template-columns: 1fr; gap: 3px; }
 }
 
+/* Comfortable type scale for operational pages. */
+.download-workspace,
+.tasks-page,
+.monitors-page,
+.history-page,
+.settings-console,
+.system-page { font-size: 13px; line-height: 1.45; }
+
+.download-workspace button,
+.download-workspace input,
+.download-workspace select,
+.tasks-page button,
+.tasks-page input,
+.monitors-page button,
+.monitors-page input,
+.history-page button,
+.history-page input,
+.settings-console button,
+.settings-console input,
+.settings-console select,
+.settings-console textarea,
+.system-page button { font-size: 12px; }
+
+.download-workspace .badge,
+.tasks-page .badge,
+.monitors-page .badge,
+.history-page .badge,
+.settings-console .badge,
+.system-page .badge { font-size: 11px; }
+
+.download-error,
+.download-empty p,
+.media-title-row > div > span,
+.analysis-browser-header > div > span,
+.download-plan > header span,
+.media-summary-copy > p,
+.media-stats,
+.playlist-selector-toolbar > div:first-child span,
+.plan-heading,
+.download-specs dt,
+.download-specs dd,
+.playlist-plan-row,
+.download-advanced summary,
+.download-destination { font-size: 11px; }
+.download-empty-modes span { font-size: 10px; }
+.media-title-row h2 { font-size: 16px; }
+.analysis-browser-header h2,
+.download-plan > header h2 { font-size: 14px; }
+.download-specs > div { min-height: 54px; }
+.download-specs dd { line-height: 1.35; }
+.start-download { font-size: 13px !important; }
+.download-workspace table { font-size: 12px; }
+.download-workspace th { height: 35px; }
+.download-workspace td { padding-top: 8px; padding-bottom: 8px; }
+
+.task-filters strong,
+.task-queue-copy > span:first-child small,
+.task-queue-meta,
+.task-detail-title p,
+.task-detail-progress span,
+.task-detail-facts dt,
+.task-detail-facts dd,
+.task-detail-link span,
+.task-detail-link a:not(.icon-button),
+.task-detail-file span,
+.task-detail-id span,
+.task-detail-file strong,
+.task-detail-id code,
+.task-playlist-toggle small,
+.task-playlist-index,
+.task-playlist-copy strong,
+.task-playlist-copy small,
+.task-playlist-pagination > .muted,
+.task-error > strong { font-size: 11px; }
+.task-queue-copy > span:first-child strong { font-size: 13px; }
+.task-queue-item { min-height: 84px; }
+.task-detail-facts > div { min-height: 60px; }
+.task-playlist-item { min-height: 45px; }
+.task-error pre { font-size: 11px; }
+
+.monitor-filters strong,
+.monitor-page-error,
+.monitor-list-copy small,
+.monitor-list-copy > span:last-child,
+.monitor-detail-title a,
+.monitor-schedule-strip span,
+.monitor-schedule-strip small,
+.monitor-facts span,
+.monitor-facts strong,
+.monitor-error strong,
+.monitor-interval-editor > div:first-child span,
+.monitor-interval-editor > div:last-child > span,
+.monitor-identity span,
+.monitor-identity code { font-size: 11px; }
+.monitor-list-copy strong { font-size: 13px; }
+.monitor-list-item { min-height: 76px; }
+.monitor-schedule-strip strong { font-size: 14px; }
+.monitor-facts > div { min-height: 60px; }
+.monitor-error p { font-size: 11px; }
+
+.history-error,
+.history-item-copy > span,
+.history-item-copy small,
+.history-detail-title p,
+.history-facts dt,
+.history-facts dd,
+.history-path > span,
+.history-source > span,
+.history-path strong,
+.history-source a:not(.icon-button),
+.history-identity span,
+.history-identity code,
+.history-pagination > span { font-size: 11px; }
+.history-item-copy > strong { font-size: 13px; }
+.history-item { min-height: 84px; }
+.history-detail-title h2 { font-size: 15px; }
+.history-facts > div { min-height: 61px; }
+
+.settings-nav strong,
+.settings-subsection-heading h3,
+.cookie-profile-tabs strong,
+.cookie-input-field > span,
+.access-status strong { font-size: 13px; }
+.settings-nav small,
+.settings-nav-meta,
+.settings-pane header p,
+.settings-subsection-heading span,
+.download-settings-grid label > small,
+.cookie-input-field > small,
+.access-form label > small,
+.settings-location-list small,
+.settings-location-list strong,
+.settings-feedback,
+.cookie-profile-tabs small,
+.cookie-status-grid span,
+.cookie-status-grid strong,
+.access-status span { font-size: 11px; }
+.settings-pane h2 { font-size: 16px; }
+.settings-nav button { min-height: 80px; }
+.settings-pane > header { min-height: 72px; }
+.settings-subsection-heading span { line-height: 1.55; }
+.settings-location-list > div { min-height: 54px; }
+.cookie-status-grid > div { min-height: 58px; }
+
+.system-overview small,
+.system-overview strong,
+.dependency-header p,
+.dependency-error,
+.dependency-name strong,
+.dependency-name span,
+.dependency-row > div:not(.dependency-name) span,
+.dependency-row > div:not(.dependency-name) strong,
+.dependency-placeholder,
+.dependency-log-toggle strong,
+.runtime-config header p,
+.runtime-config dt,
+.runtime-config dd { font-size: 11px; }
+.dependency-header h2 { font-size: 16px; }
+.system-overview strong,
+.dependency-name strong,
+.runtime-config dd { font-size: 12px; }
+.system-overview > div { min-height: 74px; }
+.dependency-row { min-height: 70px; }
+.dependency-log { font-size: 11px; }
+.runtime-config h2 { font-size: 14px; }
+.runtime-config > header,
+.runtime-config dl > div { min-height: 62px; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
