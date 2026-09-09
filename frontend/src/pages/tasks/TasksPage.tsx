@@ -1,4 +1,4 @@
-import { Ban, CheckCircle2, Clock3, Download, ListFilter, ListVideo, Search, Trash2, XCircle } from 'lucide-react';
+import { Ban, Check, CheckCircle2, Clock3, Copy, Download, ExternalLink, ListFilter, ListVideo, Search, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import type { TaskResponse, TaskStatus } from '../../api/types';
@@ -98,6 +98,25 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete }: TaskDetailP
   const counts = playlistCounts(task);
   const percent = percentFor(task, counts);
   const active = activeStatuses.has(task.status);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => setCopied(false), [task.id]);
+
+  async function copyTaskUrl() {
+    if (navigator.clipboard) await navigator.clipboard.writeText(task.url);
+    else {
+      const input = document.createElement('textarea');
+      input.value = task.url;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
   return <div className={`task-detail task-${task.status}`}>
     <header className="task-detail-header">
       <div className="task-detail-title"><span className={`task-status-icon ${statusTone(task.status)}`}>{(() => { const Icon = statusIcon(task.status); return <Icon aria-hidden="true" />; })()}</span><div><div className="task-title-row"><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div><p>{task.progress.status_text || statusLabel(task.status, t)}</p></div></div>
@@ -115,6 +134,10 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete }: TaskDetailP
       <div><dt>{t('updatedAt')}</dt><dd>{new Date(task.updated_at).toLocaleString()}</dd></div>
     </dl>
 
+    <div className="task-detail-link">
+      <div><span>{t('taskUrl')}</span><a href={task.url} target="_blank" rel="noreferrer" title={task.url}>{task.url}</a></div>
+      <div><button onClick={() => void copyTaskUrl()} title={t('copyLink')} aria-label={t('copyLink')}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}</button><a className="icon-button" href={task.url} target="_blank" rel="noreferrer" title={t('openSourceLink')} aria-label={t('openSourceLink')}><ExternalLink aria-hidden="true" /></a></div>
+    </div>
     {task.progress.current_filename && <div className="task-detail-file"><span>{t('currentFile')}</span><strong>{task.progress.current_filename}</strong></div>}
     <TaskPlaylist task={task} api={api} t={t} onChanged={onChanged} />
     {task.error && <div className="task-error"><strong>{t('taskError')}</strong><pre>{task.error}</pre></div>}

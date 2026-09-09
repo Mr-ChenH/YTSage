@@ -190,6 +190,8 @@
   "play": "播放",
   "download": "下载",
   "copyLink": "复制链接",
+  "taskUrl": "任务链接",
+  "openSourceLink": "打开来源链接",
   "player": "播放器",
   "playerFill": "填充",
   "playerFit": "适应",

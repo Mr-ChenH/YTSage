@@ -234,6 +234,13 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .task-detail-facts > div:nth-last-child(-n+3) { border-bottom: 0; }
 .task-detail-facts dt { color: var(--muted); font-size: 9px; }
 .task-detail-facts dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; }
+.task-detail-link { min-width: 0; padding: 7px 8px 7px 9px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); }
+.task-detail-link > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.task-detail-link span { color: var(--muted); font-size: 9px; }
+.task-detail-link a:not(.icon-button) { min-width: 0; overflow: hidden; color: var(--accent); font-size: 10px; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.task-detail-link > div:last-child { flex: 0 0 auto; display: flex; gap: 5px; }
+.task-detail-link button, .task-detail-link .icon-button { width: 30px; height: 30px; min-height: 30px; padding: 0; display: grid; place-items: center; }
+.task-detail-link svg { width: 14px; height: 14px; }
 .task-detail-file { min-width: 0; padding: 8px 9px; display: grid; gap: 3px; background: var(--surface); }
 .task-detail-file span, .task-detail-id span { color: var(--muted); font-size: 9px; }
 .task-detail-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
