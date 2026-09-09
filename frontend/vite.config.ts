@@ -9,6 +9,12 @@ export default defineConfig(({ mode }) => {
     base: '/static/',
     plugins: [react()],
     server: {
+      watch: {
+        awaitWriteFinish: {
+          stabilityThreshold: 150,
+          pollInterval: 20,
+        },
+      },
       proxy: {
         '/api': {
           target: apiTarget,

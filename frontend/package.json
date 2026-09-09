@@ -6,13 +6,13 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-react": "5.1.4",
     "artplayer": "^5.4.0",
     "lucide-react": "^0.468.0",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "7.3.6"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
