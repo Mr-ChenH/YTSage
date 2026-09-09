@@ -321,6 +321,42 @@ class Storage:
             ).fetchall()
         return [self._history_from_row(row) for row in rows]
 
+    def search_history(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        query: str | None = None,
+        status: str | None = None,
+        media_type: str | None = None,
+    ) -> tuple[list[HistoryEntry], int]:
+        clauses: list[str] = []
+        values: list[object] = []
+        if query:
+            clauses.append("(title LIKE ? OR url LIKE ? OR output_path LIKE ?)")
+            pattern = f"%{query}%"
+            values.extend([pattern, pattern, pattern])
+        if status:
+            clauses.append("status = ?")
+            values.append(status)
+        if media_type:
+            clauses.append("media_type = ?")
+            values.append(media_type)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            total = int(self._conn.execute(f"SELECT COUNT(*) FROM history{where}", values).fetchone()[0])
+            rows = self._conn.execute(
+                f"SELECT * FROM history{where} ORDER BY downloaded_at DESC LIMIT ? OFFSET ?",
+                [*values, limit, offset],
+            ).fetchall()
+        return [self._history_from_row(row) for row in rows], total
+
+    def get_history(self, history_id: str) -> HistoryEntry:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM history WHERE id = ?", (history_id,)).fetchone()
+        if row is None:
+            raise KeyError(history_id)
+        return self._history_from_row(row)
+
     def delete_history(self, history_id: str) -> None:
         with self._lock, self._conn:
             cursor = self._conn.execute("DELETE FROM history WHERE id = ?", (history_id,))

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, createApiClient } from '../api/client';
-import type { FileEntry, FileListResponse, HealthResponse, HistoryEntry, SettingsResponse, TaskEvent, TaskResponse } from '../api/types';
+import type { FileEntry, FileListResponse, HealthResponse, SettingsResponse, TaskEvent, TaskResponse } from '../api/types';
 import { messages, type Locale, type T } from '../i18n';
 import { FilesPage } from '../pages/files/FilesPage';
 import { HistoryPage } from '../pages/history/HistoryPage';
@@ -31,7 +31,7 @@ export function App() {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [workspaceState, setWorkspaceState] = useState(initialWorkspaceState);
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [fileLibrary, setFileLibrary] = useState<FileListResponse | null>(null);
   const [playQueue, setPlayQueue] = useState<FileEntry[]>([]);
   const [currentFile, setCurrentFile] = useState<FileEntry | null>(null);
@@ -73,23 +73,16 @@ export function App() {
       handleLoadError(err);
     }
   }, [api, handleLoadError]);
-  const loadHistory = useCallback(async () => {
-    setError(null);
-    try {
-      setHistory(await api.history(0, 50));
-      setAuthRequired(false);
-    } catch (err) {
-      handleLoadError(err);
-    }
-  }, [api, handleLoadError]);
-
   const refreshCurrentPage = useCallback(async () => {
     if (page === 'tasks') return loadTasks();
-    if (page === 'history') return loadHistory();
+    if (page === 'history') {
+      setHistoryRevision((current) => current + 1);
+      return;
+    }
     if (page === 'settings') return loadSettings();
     if (page === 'system') return Promise.all([loadStatus(), loadSettings()]).then(() => undefined);
     return loadStatus();
-  }, [page, loadTasks, loadHistory, loadSettings, loadStatus]);
+  }, [page, loadTasks, loadSettings, loadStatus]);
 
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
@@ -101,10 +94,9 @@ export function App() {
   }, [loadStatus, loadSettings]);
   useEffect(() => {
     if (page === 'tasks') void loadTasks();
-    if (page === 'history') void loadHistory();
     if (page === 'settings') void loadSettings();
     if (page === 'system') void Promise.all([loadStatus(), loadSettings()]);
-  }, [page, loadTasks, loadHistory, loadSettings, loadStatus]);
+  }, [page, loadTasks, loadSettings, loadStatus]);
   useEffect(() => {
     if (page !== 'tasks') return;
     const timer = window.setInterval(() => void loadTasks(), 8000);
@@ -119,14 +111,14 @@ export function App() {
         setTasks((current) => upsertTask(current, payload.task));
         if (payload.type === 'task_completed') {
           setFileLibrary(null);
-          if (page === 'history') void loadHistory();
+          setHistoryRevision((current) => current + 1);
         }
       };
     } catch {
       socket = null;
     }
     return () => socket?.close();
-  }, [api, page, loadHistory]);
+  }, [api]);
 
   function changePage(next: Page) {
     setPage(next);
@@ -160,7 +152,7 @@ export function App() {
       {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} state={workspaceState} onState={setWorkspaceState} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'tasks' && <TasksPage tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
       {page === 'monitors' && <MonitorsPage api={api} t={t} />}
-      {page === 'history' && <HistoryPage entries={history} api={api} t={t} onChanged={loadHistory} onOpenFiles={openFilesPage} />}
+      {page === 'history' && <HistoryPage api={api} t={t} refreshKey={historyRevision} onOpenFiles={openFilesPage} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'files' && <FilesPage library={fileLibrary} token={token} api={api} t={t} onLoaded={setFileLibrary} onPlay={playFile} />}
       {page === 'player' && <PlayerPage current={currentFile} queue={playQueue} folder={playFolder} token={token} api={api} t={t} onSelect={setCurrentFile} onQueue={setPlayQueue} onFolder={setPlayFolder} />}
       {page === 'settings' && <SettingsPage api={api} settings={settings} token={token} t={t} onToken={saveToken} onSaved={loadSettings} />}

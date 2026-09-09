@@ -6,6 +6,7 @@ import type {
   FileListResponse,
   HealthResponse,
   HistoryEntry,
+  HistoryListResponse,
   PlaylistMonitorCreate,
   PlaylistMonitorCreateResponse,
   PlaylistMonitorResponse,
@@ -29,6 +30,7 @@ export interface ApiClientOptions {
 }
 
 const pendingFileRequests = new Map<string, Promise<FileListResponse>>();
+const pendingHistoryRequests = new Map<string, Promise<HistoryListResponse>>();
 
 function headers(token: string, json = false): HeadersInit {
   const result: Record<string, string> = {};
@@ -122,6 +124,22 @@ export function createApiClient({ token }: ApiClientOptions) {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
       return fetch(`/api/history?${params.toString()}`, { headers: headers(token) }).then(parseResponse<HistoryEntry[]>);
     },
+    searchHistory: (offset = 0, limit = 20, query = '', status = '', mediaType = '') => {
+      const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      if (query) params.set('q', query);
+      if (status) params.set('status', status);
+      if (mediaType) params.set('media_type', mediaType);
+      const url = `/api/history/search?${params.toString()}`;
+      const requestKey = `${token}\n${url}`;
+      const pending = pendingHistoryRequests.get(requestKey);
+      if (pending) return pending;
+      const request = fetch(url, { headers: headers(token) })
+        .then(parseResponse<HistoryListResponse>)
+        .finally(() => pendingHistoryRequests.delete(requestKey));
+      pendingHistoryRequests.set(requestKey, request);
+      return request;
+    },
+    redownloadHistory: (historyId: string) => fetch(`/api/history/${historyId}/redownload`, { method: 'POST', headers: headers(token) }).then(parseResponse<TaskResponse>),
     deleteHistory: (historyId: string) => fetch(`/api/history/${historyId}`, { method: 'DELETE', headers: headers(token) }).then((response) => {
       if (!response.ok) return parseResponse<never>(response);
     }),

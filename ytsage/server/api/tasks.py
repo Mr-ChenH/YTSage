@@ -7,7 +7,7 @@ from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 
 from ..config import ServerConfig
-from ..models import CreateTaskRequest, TaskResponse
+from ..models import CreateTaskRequest, HistoryListResponse, TaskResponse
 from ..services.auth import require_websocket_auth
 from ..services.settings import filename_template
 from ..services.storage import Storage
@@ -84,6 +84,34 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
     @router.get("/history", dependencies=auth)
     def history(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)):
         return storage.list_history(limit=limit, offset=offset)
+
+    @router.get("/history/search", response_model=HistoryListResponse, dependencies=auth)
+    def search_history(
+        offset: int = Query(0, ge=0),
+        limit: int = Query(20, ge=1, le=100),
+        q: str | None = Query(default=None, max_length=200),
+        status: str | None = Query(default=None),
+        media_type: str | None = Query(default=None),
+    ) -> HistoryListResponse:
+        items, total = storage.search_history(limit=limit, offset=offset, query=q, status=status, media_type=media_type)
+        return HistoryListResponse(items=items, total=total, offset=offset, limit=limit)
+
+    @router.post("/history/{history_id}/redownload", response_model=TaskResponse, dependencies=auth)
+    async def redownload_history(history_id: str) -> TaskResponse:
+        try:
+            entry = storage.get_history(history_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="History entry not found") from exc
+        if not entry.task_id:
+            raise HTTPException(status_code=409, detail="Original task is no longer available")
+        try:
+            original = storage.get_task(entry.task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=409, detail="Original task is no longer available") from exc
+        options = dict(original.options)
+        if entry.url:
+            options["url"] = entry.url
+        return await manager.create_task(CreateTaskRequest(**options))
 
     @router.delete("/history/{history_id}", status_code=204, dependencies=auth)
     def delete_history(history_id: str) -> Response:

@@ -3,9 +3,23 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from ytsage.server.models import CreateTaskRequest, PlaylistEntry, TaskProgress, TaskResponse
+from ytsage.server.models import CreateTaskRequest, HistoryEntry, PlaylistEntry, TaskProgress, TaskResponse
 from ytsage.server.services.storage import Storage
 from ytsage.server.services.task_manager import TaskManager
+
+
+def test_history_search_filters_and_paginates(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "history.db")
+    storage.add_history(HistoryEntry(id="video", title="Course lesson", output_path="downloads/lesson.mp4", media_type="video", status="completed", downloaded_at="2026-01-02T00:00:00+00:00"))
+    storage.add_history(HistoryEntry(id="audio", title="Podcast", output_path="downloads/podcast.mp3", media_type="audio", status="completed", downloaded_at="2026-01-01T00:00:00+00:00"))
+
+    videos, video_total = storage.search_history(query="lesson", media_type="video", limit=10)
+    first_page, total = storage.search_history(limit=1, offset=0)
+
+    assert [entry.id for entry in videos] == ["video"]
+    assert video_total == 1
+    assert [entry.id for entry in first_page] == ["video"]
+    assert total == 2
 
 
 def _task(entries: list[PlaylistEntry]) -> TaskResponse:

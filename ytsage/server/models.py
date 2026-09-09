@@ -130,6 +130,13 @@ class HistoryEntry(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class HistoryListResponse(BaseModel):
+    items: list[HistoryEntry] = Field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    limit: int = 20
+
+
 class PlaylistMonitorCreate(BaseModel):
     url: str
     interval_minutes: int = Field(default=60, ge=5, le=10080)

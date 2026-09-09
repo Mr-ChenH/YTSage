@@ -177,6 +177,13 @@ export interface HistoryEntry {
   metadata: Record<string, unknown>;
 }
 
+export interface HistoryListResponse {
+  items: HistoryEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface PlaylistMonitorCreate {
   url: string;
   interval_minutes: number;
