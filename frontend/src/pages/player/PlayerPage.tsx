@@ -1,5 +1,5 @@
 import { ChevronRight, Copy, Download, MonitorPlay, Music2, Play } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import type { T } from '../../i18n';
@@ -22,6 +22,8 @@ interface PlayerPageProps {
 export function PlayerPage({ current, queue, folder, token, api, t, onSelect, onQueue, onFolder }: PlayerPageProps) {
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const listBodyRef = useRef<HTMLDivElement>(null);
+  const activeItemRef = useRef<HTMLButtonElement>(null);
   const active = current || queue[0] || null;
   const activeIndex = active ? queue.findIndex((file) => file.id === active.id) : -1;
   const { containerRef, videoFit, videoAspectRatio, setVideoFit } = useMediaPlayer(active, token);
@@ -48,6 +50,15 @@ export function PlayerPage({ current, queue, folder, token, api, t, onSelect, on
   useEffect(() => {
     if (!queue.length) void loadFolder(folder);
   }, []);
+  useEffect(() => {
+    const listBody = listBodyRef.current;
+    const activeItem = activeItemRef.current;
+    if (!listBody || !activeItem || window.matchMedia('(max-width: 720px)').matches) return;
+    const itemTop = activeItem.offsetTop;
+    const itemBottom = itemTop + activeItem.offsetHeight;
+    if (itemTop < listBody.scrollTop) listBody.scrollTo({ top: itemTop, behavior: 'smooth' });
+    else if (itemBottom > listBody.scrollTop + listBody.clientHeight) listBody.scrollTo({ top: itemBottom - listBody.clientHeight, behavior: 'smooth' });
+  }, [active?.id, queue.length]);
 
   return <div className="watch-layout">
     <section className="watch-main">
@@ -70,10 +81,10 @@ export function PlayerPage({ current, queue, folder, token, api, t, onSelect, on
     <aside className="watch-list">
       <div className="watch-list-header"><div><span className="watch-eyebrow">{t('playerFolder')}</span><h2>{t('playQueue')}</h2></div><span className="queue-count">{queue.length}</span></div>
       <div className="watch-folder-bar"><select value={folder} onChange={(event) => void loadFolder(event.target.value)} aria-label={t('playerFolder')}><option value="">{t('allFolders')}</option>{folders.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>
-      <div className="watch-list-body">
+      <div className="watch-list-body" ref={listBodyRef}>
         {loading && <div className="watch-queue-empty">{t('working')}</div>}
         {!loading && !queue.length && <div className="watch-queue-empty">{t('selectPlayable')}</div>}
-        {!loading && queue.map((file, index) => <button key={file.id} className={`watch-list-item ${active?.id === file.id ? 'active' : ''}`} onClick={() => onSelect(file)}><span className="watch-index">{active?.id === file.id ? <Play size={13} fill="currentColor" /> : index + 1}</span><span className="watch-media-icon">{file.media_type === 'audio' ? <Music2 size={16} /> : <MonitorPlay size={16} />}</span><span className="watch-item-copy"><strong>{file.name}</strong><span>{mediaLabel(file.media_type, t)} · {formatBytes(file.size)}</span></span></button>)}
+        {!loading && queue.map((file, index) => <button key={file.id} ref={active?.id === file.id ? activeItemRef : undefined} className={`watch-list-item ${active?.id === file.id ? 'active' : ''}`} onClick={() => onSelect(file)}><span className="watch-index">{active?.id === file.id ? <Play size={13} fill="currentColor" /> : index + 1}</span><span className="watch-media-icon">{file.media_type === 'audio' ? <Music2 size={16} /> : <MonitorPlay size={16} />}</span><span className="watch-item-copy"><strong>{file.name}</strong><span>{mediaLabel(file.media_type, t)} · {formatBytes(file.size)}</span></span></button>)}
       </div>
     </aside>
   </div>;
