@@ -142,6 +142,30 @@ def test_account_delete_is_blocked_by_monitor(tmp_path: Path):
         service.delete(account.id)
 
 
+def test_account_service_rejects_library_access_for_invalid_login(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    account = storage.create_account("account", "bilibili", "A", "accounts/account/cookies.txt")
+    storage.update_account(account.id, state="invalid")
+    service = AccountService(tmp_path, storage, FakeIdentityProvider())  # type: ignore[arg-type]
+
+    with pytest.raises(AccountConflictError, match="login is invalid"):
+        service.resolve_cookie_file(account.id, "bilibili")
+
+
+def test_bilibili_provider_rejects_empty_created_favorite_payload_as_invalid_login(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(COOKIE, encoding="utf-8")
+    provider = BilibiliProvider(http=FakeHttp([{"code": 0, "message": "OK", "data": None}]))
+    account = Storage(tmp_path / "server.db").create_account("account", "bilibili", "A", "accounts/account/cookies.txt")
+    account = account.model_copy(update={"external_id": "1001"})
+
+    with pytest.raises(BilibiliProviderError) as exc:
+        provider.list_resources(account, cookie, "created_favorite", 0, 20)
+
+    assert exc.value.code == "account_login_invalid"
+    assert exc.value.status_code == 424
+
+
 def test_bilibili_provider_lists_created_favorites_with_local_pagination(tmp_path: Path):
     cookie = tmp_path / "cookies.txt"
     cookie.write_text(COOKIE, encoding="utf-8")
@@ -197,6 +221,57 @@ def test_bilibili_provider_paginates_favorite_entries(tmp_path: Path):
     assert http.calls[0][1]["params"]["pn"] == 2
 
 
+def test_bilibili_provider_classifies_mixed_favorite_entries(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(COOKIE, encoding="utf-8")
+    http = FakeHttp([{"code": 0, "data": {"info": {"id": 11, "media_count": 3}, "medias": [
+        {"id": 1, "type": 2, "bvid": "BVsingle", "title": "Single", "page": 1},
+        {"id": 2, "type": 2, "bvid": "BVmultipage", "title": "Course", "page": 12},
+        {"id": 33, "type": 21, "title": "Favorite collection"},
+    ]}}])
+    provider = BilibiliProvider(http=http)
+    account = Storage(tmp_path / "server.db").create_account("account", "bilibili", "A", "accounts/account/cookies.txt")
+    account = account.model_copy(update={"external_id": "1001"})
+
+    entries = provider.list_entries(account, cookie, "created_favorite:11", 0, 20).entries
+
+    assert [entry.entry_type for entry in entries] == ["video", "multipart_video", "favorite_collection"]
+    assert entries[1].item_count == 12
+    assert entries[2].resource_id == "collected_favorite:33"
+    assert entries[2].url == "https://www.bilibili.com/medialist/detail/ml33"
+    assert all(entry.is_available for entry in entries)
+
+
+def test_bilibili_provider_expands_multipart_and_nested_collection(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(COOKIE, encoding="utf-8")
+    http = FakeHttp([
+        {"code": 0, "data": {"title": "Course", "owner": {"name": "Teacher"}, "pages": [
+            {"page": 1, "part": "Intro", "duration": 60},
+            {"page": 2, "part": "Lesson", "duration": 120},
+        ]}},
+        {"code": 0, "data": {"info": {"id": 33, "title": "Nested", "media_count": 1}, "medias": [
+            {"id": 9, "type": 2, "bvid": "BVnested", "title": "Nested video", "page": 1},
+        ]}},
+    ])
+    provider = BilibiliProvider(http=http)
+    account = Storage(tmp_path / "server.db").create_account("account", "bilibili", "A", "accounts/account/cookies.txt")
+    account = account.model_copy(update={"external_id": "1001"})
+    entries = [
+        PlaylistEntry(index=1, id="BVmultipage", title="Course", url="https://www.bilibili.com/video/BVmultipage", entry_type="multipart_video", item_count=2),
+        PlaylistEntry(index=2, id="favorite:33", title="Saved list", url="https://www.bilibili.com/medialist/detail/ml33", entry_type="favorite_collection", resource_id="collected_favorite:33"),
+    ]
+
+    expanded = provider.expand_entries(account, cookie, entries)
+
+    assert [entry.index for entry in expanded] == [1, 2, 3]
+    assert [entry.title for entry in expanded] == ["Intro", "Lesson", "Nested video"]
+    assert expanded[0].url == "https://www.bilibili.com/video/BVmultipage/?p=1"
+    assert expanded[1].part_index == 2
+    assert expanded[1].part_count == 2
+    assert expanded[2].parent_title == "Saved list"
+
+
 def test_flat_playlist_marks_invalid_video_unavailable():
     entry = _playlist_entry(1, {"id": "BVinvalid", "url": "BVinvalid", "title": "[已失效视频]", "attr": 1})
 
@@ -220,6 +295,37 @@ def test_bilibili_provider_marks_invalid_favorite_video_unavailable(tmp_path: Pa
     assert entry.url is None
     assert entry.webpage_url is None
     assert entry.unavailable_reason
+
+
+@pytest.mark.anyio
+async def test_task_creation_expands_nested_bilibili_entries_before_persisting(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    account_service = Mock()
+    account_service.resolve_cookie_file.return_value = tmp_path / "cookies.txt"
+    account_service.expand_playlist_entries.return_value = [
+        PlaylistEntry(index=1, id="BVone", url="https://www.bilibili.com/video/BVone", parent_title="Saved list"),
+        PlaylistEntry(index=2, id="BVtwo", url="https://www.bilibili.com/video/BVtwo", parent_title="Saved list"),
+    ]
+    manager = TaskManager(Mock(config_dir=tmp_path), storage, account_service)
+    manager._publish = AsyncMock()
+    request = CreateTaskRequest(
+        url="https://space.bilibili.com/1001/favlist?fid=33",
+        account_id="account",
+        playlist_entries=[PlaylistEntry(
+            index=1,
+            id="favorite:33",
+            title="Saved list",
+            url="https://www.bilibili.com/medialist/detail/ml33",
+            entry_type="favorite_collection",
+            resource_id="collected_favorite:33",
+        )],
+    )
+
+    task = await manager.create_task(request)
+
+    assert [entry["id"] for entry in task.options["playlist_entries"]] == ["BVone", "BVtwo"]
+    assert all(entry["parent_title"] == "Saved list" for entry in task.options["playlist_entries"])
+    account_service.expand_playlist_entries.assert_called_once()
 
 
 @pytest.mark.anyio

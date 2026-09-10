@@ -346,6 +346,7 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .task-playlist-copy { min-width: 0; display: grid; gap: 2px; }
 .task-playlist-copy strong, .task-playlist-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-playlist-copy strong { font-size: 10px; }
+.task-playlist-copy .task-playlist-parent { color: var(--blue); font-size: 10px; }
 .task-playlist-copy .task-playlist-failure { color: var(--red); font-size: 9px; }
 .task-playlist-copy .task-playlist-filename { color: var(--muted); font-size: 9px; }
 .task-playlist-live { min-width: 0; display: grid; gap: 4px; }
@@ -590,7 +591,7 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .account-master > header span { color: var(--muted); font-size: 11px; }
 .account-master > header strong { font-size: 12px; }
 .account-list { min-height: 0; flex: 1; overflow-y: auto; }
-.account-list-item { width: 100%; min-height: 68px; padding: 9px 10px; display: grid; grid-template-columns: 38px minmax(0,1fr) 10px; align-items: center; gap: 9px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; box-shadow: none; text-align: left; }
+.account-list-item { width: 100%; min-height: 68px; padding: 9px 10px; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center; gap: 9px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; box-shadow: none; text-align: left; }
 .account-list-item:hover, .account-list-item.active { background: var(--accent-soft); }
 .account-list-item > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
 .account-list-item strong, .account-list-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -600,15 +601,23 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .account-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .account-avatar svg { width: 18px; }
 .account-avatar.large { width: 58px; height: 58px; }
-.account-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--subtle); }
-.account-state-dot.valid { background: var(--green); }
-.account-state-dot.warning { background: #d97706; }
-.account-state-dot.error { background: var(--red); }
+.account-state-label { min-height: 22px; padding: 2px 6px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--muted); font-size: 10px; line-height: 1.2; white-space: nowrap; }
+.account-state-label > span { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--subtle); }
+.account-state-label.valid { border-color: #bbf7d0; background: var(--green-soft); color: var(--green); }
+.account-state-label.valid > span { background: var(--green); }
+.account-state-label.warning { border-color: #fed7aa; background: #fff7ed; color: #b45309; }
+.account-state-label.warning > span { background: #d97706; }
+.account-state-label.error { border-color: #fecaca; background: var(--red-soft); color: var(--red); }
+.account-state-label.error > span { background: var(--red); }
 .account-detail { min-width: 0; min-height: 0; padding: 16px 20px 20px; display: flex; flex-direction: column; overflow: hidden; }
 .account-error { flex: 0 0 auto; }
 .account-identity { min-height: 88px; flex: 0 0 auto; display: grid; grid-template-columns: 58px minmax(0,1fr) auto; align-items: center; gap: 13px; border-bottom: 1px solid var(--line); }
 .account-identity > div:nth-child(2) { min-width: 0; }
 .account-identity > div:nth-child(2) > span { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+.account-identity .account-state-label { color: inherit; }
+.account-identity .account-state-label.valid { color: var(--green); }
+.account-identity .account-state-label.warning { color: #b45309; }
+.account-identity .account-state-label.error { color: var(--red); }
 .account-identity h2 { margin-top: 3px; font-size: 16px; }
 .account-identity p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
 .account-actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
@@ -634,6 +643,15 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .account-empty svg, .account-loading svg { width: 22px; }
 .account-empty strong { font-size: 12px; }
 .account-error { padding: 8px 10px; border-left: 3px solid var(--red); background: var(--red-soft); color: var(--red); font-size: 11px; }
+.account-cookie-editor { padding: 12px 0; flex: 0 0 auto; display: grid; grid-template-columns: minmax(0,1fr) minmax(320px,1.4fr); gap: 10px 18px; border-bottom: 1px solid var(--line); }
+.account-cookie-editor > header { min-width: 0; display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.account-cookie-editor > header > div { min-width: 0; display: grid; gap: 3px; }
+.account-cookie-editor h3 { font-size: 13px; }
+.account-cookie-editor p { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.account-cookie-editor > label { min-width: 0; grid-row: span 2; display: grid; gap: 5px; font-size: 11px; }
+.account-cookie-editor textarea { min-height: 112px; resize: vertical; font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.account-cookie-editor > footer { display: flex; align-items: end; gap: 7px; }
+.account-cookie-editor > footer svg { width: 14px; height: 14px; }
 .account-add-form { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
 .account-add-form > header, .account-entries > header { min-height: 64px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
 .account-add-form header h2, .account-entries header h2 { font-size: 15px; }
@@ -881,6 +899,9 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .account-identity { grid-template-columns: 48px minmax(0,1fr); padding-bottom: 10px; }
   .account-avatar.large { width: 48px; height: 48px; }
   .account-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .account-cookie-editor { grid-template-columns: 1fr; }
+  .account-cookie-editor > label { grid-row: auto; }
+  .account-cookie-editor > footer { align-items: center; flex-wrap: wrap; }
   .account-resource-tabs { gap: 8px; overflow-x: auto; }
   .account-resource-tabs button { flex: 0 0 auto; }
   .account-resource-row { grid-template-columns: 42px minmax(0,1fr) 15px; }

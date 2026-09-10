@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 TaskStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
 MediaType = Literal["video", "audio", "subtitle", "other"]
 DownloadMode = Literal["video", "audio", "subtitles"]
+PlaylistEntryType = Literal["video", "multipart_video", "favorite_collection", "audio"]
 
 
 class FormatInfo(BaseModel):
@@ -47,6 +48,13 @@ class PlaylistEntry(BaseModel):
     thumbnail_url: str | None = None
     is_available: bool = True
     unavailable_reason: str | None = None
+    entry_type: PlaylistEntryType = "video"
+    item_count: int | None = None
+    resource_id: str | None = None
+    parent_id: str | None = None
+    parent_title: str | None = None
+    part_index: int | None = None
+    part_count: int | None = None
 
 
 class AnalyzeResponse(BaseModel):

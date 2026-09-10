@@ -12,6 +12,7 @@ from fastapi import HTTPException, status
 
 from ..analyzers import bilibili
 from ..models import AnalyzeRequest, AnalyzeResponse, FormatInfo, PlaylistEntry, SubtitleInfo
+from ..providers.bilibili import BilibiliProviderError
 from .cookies import cookie_file_for_url, cookie_file_path, cookie_profile_for_url, cookie_profile_status, save_cookie_login_status, youtube_login_cookies_present
 from .dependencies import ytdlp_base_command
 
@@ -237,7 +238,21 @@ def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None 
     playlist_entries = [_playlist_entry(index, item) for index, item in enumerate(entry_items, start=1)]
 
     collection_title = collection_cover = None
-    if _is_bilibili_url(request.url):
+    favorite_resource_id = bilibili.favorite_resource_id(request.url)
+    if favorite_resource_id and selected_account is not None and account_service is not None:
+        try:
+            favorite_resource, favorite_entries = account_service.list_all_entries(selected_account.id, favorite_resource_id)
+            playlist_entries = account_service.expand_playlist_entries(selected_account.id, favorite_entries)
+        except BilibiliProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        collection_title = favorite_resource.title
+        collection_cover = favorite_resource.cover_url
+        is_playlist = True
+        raw["playlist_source"] = "bilibili_account_favorite"
+        raw["collection_title"] = collection_title
+        if collection_cover:
+            raw["collection_cover"] = collection_cover
+    elif _is_bilibili_url(request.url):
         collection_title, collection_entries, collection_cover = _bilibili_collection_entries(request.url, cookie_file)
         if collection_entries:
             playlist_entries, is_playlist = collection_entries, True

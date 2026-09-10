@@ -62,6 +62,7 @@ class TaskManager:
         self._started = False
 
     async def create_task(self, request: CreateTaskRequest) -> TaskResponse:
+        request = request.model_copy(deep=True)
         if any(not entry.is_available for entry in request.playlist_entries):
             raise ValueError("Unavailable playlist entries cannot be downloaded.")
         if request.cookie_file:
@@ -72,7 +73,20 @@ class TaskManager:
         if request.account_id:
             if self.account_service is None:
                 raise ValueError("Account selection is unavailable.")
-            self.account_service.resolve_cookie_file(request.account_id, cookie_profile_for_url(request.url))
+            expected_platform = cookie_profile_for_url(request.url)
+            self.account_service.resolve_cookie_file(request.account_id, expected_platform)
+            expandable = any(entry.entry_type in {"multipart_video", "favorite_collection"} for entry in request.playlist_entries)
+            if expandable:
+                if expected_platform != "bilibili":
+                    raise ValueError("Nested playlist entries are only supported for Bilibili accounts.")
+                expanded_entries = await asyncio.to_thread(
+                    self.account_service.expand_playlist_entries,
+                    request.account_id,
+                    request.playlist_entries,
+                )
+                request.playlist_entries = [entry for entry in expanded_entries if entry.is_available]
+                if not request.playlist_entries:
+                    raise ValueError("The selected Bilibili collection contains no downloadable videos.")
         task_id = uuid.uuid4().hex
         task = self.storage.create_task(task_id, request)
         await self.queue.put(task_id)

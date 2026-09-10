@@ -8,7 +8,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from ..models import AccountCreateRequest, AccountResponse, AccountResourceEntriesResponse, AccountResourceListResponse, AccountUpdateRequest, PlatformAccount
+from ..models import AccountCreateRequest, AccountResponse, AccountResource, AccountResourceEntriesResponse, AccountResourceListResponse, AccountUpdateRequest, PlatformAccount, PlaylistEntry
 from ..providers.bilibili import BilibiliProvider, BilibiliProviderError
 from .cookies import cookie_profile_status, normalize_cookies
 from .storage import Storage, utc_now
@@ -141,6 +141,8 @@ class AccountService:
         account = self.storage.get_account(account_id)
         if expected_platform and account.platform != expected_platform:
             raise AccountConflictError("The selected account does not match this platform.")
+        if require_usable and account.state in {"invalid", "expired"}:
+            raise AccountConflictError("The selected Bilibili account login is invalid. Replace its cookies and verify the account again.")
         root = self.accounts_dir.resolve()
         path = (self.config_dir / account.cookie_filename).resolve()
         if root not in path.parents:
@@ -163,6 +165,32 @@ class AccountService:
         account = self.storage.get_account(account_id)
         try:
             return self.bilibili.list_entries(account, self.resolve_cookie_file(account_id, "bilibili"), resource_id, offset, limit)
+        except BilibiliProviderError as exc:
+            if exc.code == "account_login_invalid":
+                self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
+            raise
+
+    def list_all_entries(self, account_id: str, resource_id: str) -> tuple[AccountResource, list[PlaylistEntry]]:
+        account = self.storage.get_account(account_id)
+        try:
+            return self.bilibili.list_all_entries(
+                account,
+                self.resolve_cookie_file(account_id, "bilibili"),
+                resource_id,
+            )
+        except BilibiliProviderError as exc:
+            if exc.code == "account_login_invalid":
+                self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
+            raise
+
+    def expand_playlist_entries(self, account_id: str, entries: list[PlaylistEntry]) -> list[PlaylistEntry]:
+        account = self.storage.get_account(account_id)
+        try:
+            return self.bilibili.expand_entries(
+                account,
+                self.resolve_cookie_file(account_id, "bilibili"),
+                entries,
+            )
         except BilibiliProviderError as exc:
             if exc.code == "account_login_invalid":
                 self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))

@@ -1,6 +1,7 @@
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type MediaType = 'video' | 'audio' | 'subtitle' | 'other';
 export type DownloadMode = 'video' | 'audio' | 'subtitles';
+export type PlaylistEntryType = 'video' | 'multipart_video' | 'favorite_collection' | 'audio';
 
 export interface HealthResponse {
   healthy: boolean;
@@ -162,6 +163,13 @@ export interface PlaylistEntry {
   thumbnail_url?: string | null;
   is_available?: boolean;
   unavailable_reason?: string | null;
+  entry_type?: PlaylistEntryType;
+  item_count?: number | null;
+  resource_id?: string | null;
+  parent_id?: string | null;
+  parent_title?: string | null;
+  part_index?: number | null;
+  part_count?: number | null;
 }
 
 export interface AnalyzeResponse {

@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from ytsage.server.analyzers.bilibili import validate_cookie_login
-from ytsage.server.models import AnalyzeRequest
+from ytsage.server.models import AccountResource, AnalyzeRequest, PlaylistEntry
 from ytsage.server.services.analyzer import analyze
 from ytsage.server.services.cookies import cookie_profile_statuses
 
@@ -74,6 +74,42 @@ def test_bilibili_cookie_login_uses_online_account_status(tmp_path: Path) -> Non
 
     http.get.side_effect = requests.RequestException("offline")
     assert validate_cookie_login(cookie_path, http=http) == "unknown"
+
+
+def test_analyze_expands_account_favorite_collections(tmp_path: Path) -> None:
+    cookie_path = tmp_path / "cookies.txt"
+    cookie_path.write_text("# Netscape HTTP Cookie File\n.bilibili.com\tTRUE\t/\tTRUE\t4102444800\tSESSDATA\ttest\n", encoding="utf-8")
+    account = Mock(id="account", platform="bilibili", label="Primary", state="valid")
+    account_service = Mock()
+    account_service.storage.get_account.return_value = account
+    account_service.resolve_cookie_file.return_value = cookie_path
+    account_service.list_all_entries.return_value = (
+        AccountResource(
+            id="created_favorite:33", account_id="account", platform="bilibili",
+            resource_type="created_favorite", external_id="33", title="My favorite",
+            source_url="https://space.bilibili.com/1001/favlist?fid=33",
+        ),
+        [PlaylistEntry(index=1, id="favorite:44", entry_type="favorite_collection", resource_id="collected_favorite:44")],
+    )
+    account_service.expand_playlist_entries.return_value = [
+        PlaylistEntry(index=1, id="BVone", title="One", url="https://www.bilibili.com/video/BVone", parent_title="Nested")
+    ]
+
+    with (
+        patch("ytsage.server.services.analyzer.ytdlp_base_command", return_value=["yt-dlp"]),
+        patch("ytsage.server.services.analyzer.subprocess.run", return_value=_result()),
+    ):
+        response = analyze(
+            AnalyzeRequest(url="https://space.bilibili.com/1001/favlist?fid=33", account_id="account"),
+            config_dir=tmp_path,
+            account_service=account_service,
+        )
+
+    assert response.is_playlist is True
+    assert response.title == "My favorite"
+    assert response.playlist_count == 1
+    assert response.playlist_entries[0].parent_title == "Nested"
+    assert response.raw["playlist_source"] == "bilibili_account_favorite"
 
 
 def test_analyze_reports_expired_cookie_without_passing_it_to_ytdlp(tmp_path: Path) -> None:

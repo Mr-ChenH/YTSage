@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocke
 
 from ..config import ServerConfig
 from ..models import CreateTaskRequest, HistoryListResponse, TaskResponse
+from ..providers.bilibili import BilibiliProviderError
 from ..services.auth import require_websocket_auth
 from ..services.settings import filename_template
 from ..services.storage import Storage
@@ -28,6 +29,8 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
             return await manager.create_task(request)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
+        except BilibiliProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
         except ValueError as exc:
             raise HTTPException(status_code=424, detail=str(exc)) from exc
 

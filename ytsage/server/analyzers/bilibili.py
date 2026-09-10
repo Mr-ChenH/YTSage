@@ -51,6 +51,11 @@ def _space_list_params(url: str) -> tuple[str, str] | None:
     return (match.group(1), match.group(2)) if match else None
 
 
+def favorite_resource_id(url: str) -> str | None:
+    match = re.search(r"(?:[?&]fid=|/medialist/detail/ml)(\d+)", url)
+    return f"created_favorite:{match.group(1)}" if match else None
+
+
 def _json_response(response: requests.Response) -> dict[str, Any] | None:
     try:
         return json.loads(response.content.decode("utf-8"))
