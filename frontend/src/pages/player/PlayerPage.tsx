@@ -1,5 +1,5 @@
 import { ArrowLeft, ChevronRight, Copy, Download, Folder, HardDrive, ListVideo, MonitorPlay, Music2, Play, RefreshCw, Search } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import type { T } from '../../i18n';
@@ -41,8 +41,10 @@ export function PlayerPage({ current, queue, folder, token, api, t, onSelect, on
   const [sideView, setSideView] = useState<'folders' | 'queue'>(() => current ? 'queue' : 'folders');
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [playerBounds, setPlayerBounds] = useState({ width: 0, maxHeight: 720 });
   const listBodyRef = useRef<HTMLDivElement>(null);
   const activeItemRef = useRef<HTMLButtonElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(false);
   const loadSequenceRef = useRef(0);
   const active = current;
@@ -61,6 +63,9 @@ export function PlayerPage({ current, queue, folder, token, api, t, onSelect, on
   }, new Map<string, number>()), [filteredQueue, folder]);
   const breadcrumbParts = folder.split('/').filter(Boolean);
   const { containerRef, videoFit, videoAspectRatio, setVideoFit } = useMediaPlayer(active, token);
+  const playerRatio = active?.media_type === 'video' ? videoAspectRatio : 16 / 9;
+  const playerWidth = playerBounds.width ? Math.min(playerBounds.width, playerBounds.maxHeight * playerRatio) : 0;
+  const playerHeight = playerWidth ? playerWidth / playerRatio : 0;
 
   function selectRelative(offset: number) {
     const next = navigationQueue[activeIndex + offset];
@@ -104,6 +109,23 @@ export function PlayerPage({ current, queue, folder, token, api, t, onSelect, on
     void loadFolder(folder, recursive, active?.id, true);
   }
 
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const updateBounds = () => {
+      const width = Math.round(stage.clientWidth * 100) / 100;
+      const maxHeight = Math.round(Math.min(window.innerHeight * 0.74, 720) * 100) / 100;
+      setPlayerBounds((current) => current.width === width && current.maxHeight === maxHeight ? current : { width, maxHeight });
+    };
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(stage);
+    window.addEventListener('resize', updateBounds);
+    updateBounds();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateBounds);
+    };
+  }, []);
   useEffect(() => {
     if (initialLoadRef.current) return;
     initialLoadRef.current = true;
@@ -123,8 +145,8 @@ export function PlayerPage({ current, queue, folder, token, api, t, onSelect, on
 
   return <div className={`watch-layout ${active ? 'has-active-media' : 'is-empty'}`}>
     <section className="watch-main">
-      <div className="watch-stage">
-        <div className="watch-player-shell" style={{ aspectRatio: active?.media_type === 'video' ? String(videoAspectRatio) : '16 / 9' }}>
+      <div className="watch-stage" ref={stageRef}>
+        <div className="watch-player-shell" style={active && playerWidth ? { aspectRatio: String(playerRatio), width: `${playerWidth}px`, height: `${playerHeight}px`, flexBasis: `${playerWidth}px` } : { aspectRatio: '16 / 9' }}>
           {!active && <div className="watch-empty"><span className="watch-empty-icon"><MonitorPlay size={26} aria-hidden="true" /></span><h2>{loading ? t('working') : t('selectPlayable')}</h2></div>}
           {active && <div className={`art-player-host ${active.media_type === 'audio' ? 'audio-mode' : ''}`} ref={containerRef} />}
         </div>
