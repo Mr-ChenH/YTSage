@@ -95,6 +95,11 @@ export function createApiClient({ token }: ApiClientOptions) {
       return request;
     },
     accountAvatarUrl: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/avatar${token ? `?token=${encodeURIComponent(token)}` : ''}`,
+    accountImageUrl: (accountId: string, imageUrl: string) => {
+      const params = new URLSearchParams({ url: imageUrl });
+      if (token) params.set('token', token);
+      return `/api/accounts/${encodeURIComponent(accountId)}/image?${params}`;
+    },
     createAccount: (request: AccountCreateRequest) => fetch('/api/accounts', { method: 'POST', headers: headers(token, true), body: JSON.stringify(request) }).then(parseResponse<PlatformAccount>),
     updateAccount: (accountId: string, request: AccountUpdateRequest) => fetch(`/api/accounts/${accountId}`, { method: 'PATCH', headers: headers(token, true), body: JSON.stringify(request) }).then(parseResponse<PlatformAccount>),
     verifyAccount: (accountId: string) => fetch(`/api/accounts/${accountId}/verify`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlatformAccount>),

@@ -287,7 +287,7 @@ class BilibiliProvider:
         return AccountResource(
             id=f"{kind}:{external_id}", account_id=account.id, platform="bilibili", resource_type=kind,
             external_id=external_id, title=as_str(item.get("title")) or "Untitled favorite",
-            description=as_str(item.get("intro")), cover_url=as_str(item.get("cover")),
+            description=as_str(item.get("intro")), cover_url=normalize_image_url(item.get("cover")),
             owner_name=as_str(upper.get("name")) or account.display_name, owner_id=owner_id,
             item_count=as_int(item.get("media_count")), is_private=bool((as_int(item.get("attr")) or 0) & 1),
             source_url=f"https://space.bilibili.com/{owner_id}/favlist?fid={external_id}", updated_at=as_int(item.get("mtime")),
@@ -305,7 +305,7 @@ class BilibiliProvider:
         return AccountResource(
             id=f"{kind}:{external_id}", account_id=account.id, platform="bilibili", resource_type=kind,
             external_id=external_id, title=as_str(meta.get("name")) or "Untitled collection",
-            description=as_str(meta.get("description")), cover_url=as_str(meta.get("cover")),
+            description=as_str(meta.get("description")), cover_url=normalize_image_url(meta.get("cover")),
             owner_name=account.display_name, owner_id=account.external_id, item_count=as_int(meta.get("total")),
             source_url=source_url, updated_at=as_int(meta.get("mtime")) or as_int(meta.get("last_update_ts")) or as_int(meta.get("ptime")),
         )

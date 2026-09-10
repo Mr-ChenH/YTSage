@@ -17,25 +17,29 @@ def _provider_http_error(exc: BilibiliProviderError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)})
 
 
-def _fetch_avatar(avatar_url: str) -> Response:
-    avatar_url = normalize_image_url(avatar_url) or avatar_url
-    parsed = urlparse(avatar_url)
+def _fetch_bilibili_image(image_url: str) -> Response:
+    image_url = normalize_image_url(image_url) or image_url
+    parsed = urlparse(image_url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or not any(host.endswith(suffix) for suffix in _AVATAR_HOST_SUFFIXES):
-        raise HTTPException(status_code=422, detail="Unsupported account avatar URL")
+        raise HTTPException(status_code=422, detail="Unsupported Bilibili image URL")
     try:
-        upstream = requests.get(avatar_url, headers=_HEADERS, timeout=15)
+        upstream = requests.get(image_url, headers=_HEADERS, timeout=15)
         upstream.raise_for_status()
     except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail="Unable to fetch account avatar") from exc
+        raise HTTPException(status_code=502, detail="Unable to fetch Bilibili image") from exc
     content_type = upstream.headers.get("Content-Type", "")
     if not content_type.lower().startswith("image/"):
-        raise HTTPException(status_code=502, detail="Account avatar response is not an image")
+        raise HTTPException(status_code=502, detail="Bilibili image response is not an image")
     return Response(
         content=upstream.content,
         media_type=content_type.split(";", 1)[0],
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+def _fetch_avatar(avatar_url: str) -> Response:
+    return _fetch_bilibili_image(avatar_url)
 
 
 def create_accounts_router(service: AccountService, auth_dependency: AuthDependency) -> APIRouter:
@@ -71,7 +75,15 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             raise HTTPException(status_code=404, detail="Account not found") from exc
         if not account.avatar_url:
             raise HTTPException(status_code=404, detail="Account avatar not found")
-        return _fetch_avatar(account.avatar_url)
+        return _fetch_bilibili_image(account.avatar_url)
+
+    @router.get("/{account_id}/image", response_model=None)
+    def account_image(account_id: str, url: str = Query(max_length=2048)) -> Response:
+        try:
+            service.get(account_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Account not found") from exc
+        return _fetch_bilibili_image(url)
 
     @router.patch("/{account_id}", response_model=AccountResponse)
     def update_account(account_id: str, request: AccountUpdateRequest) -> AccountResponse:

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import HTTPException
 
 from ytsage.server.api.accounts import _fetch_avatar
-from ytsage.server.models import AccountCreateRequest, AccountUpdateRequest, CreateTaskRequest, PlaylistEntry, PlaylistMonitorCreate
+from ytsage.server.models import AccountCreateRequest, AccountResource, AccountUpdateRequest, CreateTaskRequest, PlatformAccount, PlaylistEntry, PlaylistMonitorCreate
 from ytsage.server.providers.bilibili import BilibiliIdentity, BilibiliProvider, BilibiliProviderError
 from ytsage.server.services.accounts import AccountConflictError, AccountService
 from ytsage.server.services.analyzer import _playlist_entry
@@ -373,6 +373,24 @@ def test_monitor_storage_distinguishes_accounts_for_same_url(tmp_path: Path):
 
     assert first.account_id == "account-a"
     assert second.account_id == "account-b"
+
+
+def test_bilibili_provider_normalizes_resource_cover_urls():
+    account = PlatformAccount(
+        id="account", platform="bilibili", label="Primary", cookie_filename="account.txt",
+        created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
+    )
+
+    favorite = BilibiliProvider._favorite_resource(account, {
+        "id": 42, "title": "Favorite", "cover": "http://archive.biliimg.com/cover.jpg",
+    }, "collected_favorite")
+    collection = BilibiliProvider._collection_resource(account, {
+        "meta": {"season_id": 84, "name": "Collection", "cover": "//i0.hdslb.com/cover.jpg"},
+    }, "collection")
+
+    assert isinstance(favorite, AccountResource)
+    assert favorite.cover_url == "https://archive.biliimg.com/cover.jpg"
+    assert collection.cover_url == "https://i0.hdslb.com/cover.jpg"
 
 
 def test_bilibili_provider_normalizes_protocol_relative_avatar(tmp_path: Path):
