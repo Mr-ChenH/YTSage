@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from ytsage.server.models import CreateTaskRequest, HistoryEntry, PlaylistEntry, TaskProgress, TaskResponse
+from ytsage.server.models import CreateTaskRequest, HistoryEntry, PlaylistEntry, PlaylistEntryGroup, TaskProgress, TaskResponse
 from ytsage.server.services.storage import Storage
 from ytsage.server.services.task_manager import TaskManager
 
@@ -78,6 +78,25 @@ def test_playlist_history_uses_collection_directory_and_statistics(tmp_path: Pat
     assert history.file_size == len(b"video") + len(b"first-video")
     assert history.metadata["is_playlist"] is True
     assert history.metadata["playlist_count"] == 2
+    assert history.metadata["output_is_directory"] is True
+
+
+def test_playlist_history_uses_root_directory_for_nested_collections(tmp_path: Path) -> None:
+    download_root = tmp_path / "downloads"
+    collection_dir = download_root / "Course"
+    nested_dir = collection_dir / "Saved list" / "Video course"
+    nested_dir.mkdir(parents=True)
+    output = nested_dir / "lesson.mp4"
+    output.write_bytes(b"nested-video")
+    storage = Storage(tmp_path / "nested-playlist-history.db")
+    task = _task([PlaylistEntry(index=1, id="one", url="https://example.com/one")])
+    manager = TaskManager(Mock(download_dir=download_root), storage)
+
+    manager._add_history_if_available(task, str(output))
+
+    history = storage.list_history()[0]
+    assert history.output_path == str(collection_dir)
+    assert history.file_size == len(b"nested-video")
     assert history.metadata["output_is_directory"] is True
 
 
@@ -356,6 +375,29 @@ async def test_single_selected_playlist_entry_uses_entry_url() -> None:
     assert request.playlist_items is None
     assert request.playlist_entries == []
     assert request.filename_template == "Course/04-%(title)s.%(ext)s"
+
+
+@pytest.mark.anyio
+async def test_nested_collection_download_uses_group_directories() -> None:
+    entry = PlaylistEntry(
+        index=4,
+        url="https://www.bilibili.com/video/BVnested",
+        group_path=[
+            PlaylistEntryGroup(id="saved", title="Saved list", entry_type="favorite_collection"),
+            PlaylistEntryGroup(id="course", title="Video course", entry_type="multipart_video"),
+        ],
+    )
+    task = _task([entry])
+    manager = TaskManager(Mock(), Mock())
+    manager.storage.get_task.return_value = task.model_copy(update={"status": "running"})
+    manager.storage.update_task.side_effect = lambda *_args, **fields: task.model_copy(update=fields)
+    manager._publish = AsyncMock()
+    manager._execute_download = AsyncMock(return_value=([], 0, "/downloads/video.mp4", TaskProgress()))
+
+    await manager._run_task(task)
+
+    request = manager._execute_download.await_args.args[1]
+    assert request.filename_template == "Course/Saved list/Video course/04-%(title)s.%(ext)s"
 
 
 @pytest.mark.anyio

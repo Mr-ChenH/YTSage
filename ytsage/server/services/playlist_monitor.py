@@ -49,7 +49,7 @@ class PlaylistMonitorService:
     async def create(self, request: PlaylistMonitorCreate) -> PlaylistMonitorCreateResponse:
         account_id = request.account_id or request.download_options.account_id
         analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=request.url, account_id=account_id))
-        if not analysis.is_playlist or not analysis.playlist_entries:
+        if not analysis.is_playlist:
             raise ValueError("URL did not resolve to a playlist or collection")
 
         normalized = request.model_copy(deep=True)
@@ -63,8 +63,6 @@ class PlaylistMonitorService:
             initial_request.playlist_entries = [entry for entry in analysis.playlist_entries if entry.is_available]
         else:
             initial_request.playlist_entries = [entry for entry in initial_request.playlist_entries if entry.is_available]
-        if not initial_request.playlist_entries:
-            raise ValueError("The collection contains no downloadable entries")
         initial_request.playlist_items = None
         normalized.download_options.playlist_entries = []
         normalized.download_options.playlist_items = None
@@ -80,11 +78,22 @@ class PlaylistMonitorService:
                 last_checked_at=utc_now(),
                 last_error=None,
             )
-            task = await self.task_manager.create_task(initial_request)
-            monitor = self.storage.update_monitor(monitor.id, last_task_id=task.id)
+            if initial_request.playlist_entries:
+                initial_request.task_origin = "monitor_initial"
+                initial_request.monitor_id = monitor.id
+                initial_request.monitor_detected_at = utc_now()
+                initial_request.monitor_new_item_count = len(initial_request.playlist_entries)
+                task = await self.task_manager.create_task(initial_request)
+                monitor = self.storage.update_monitor(monitor.id, last_task_id=task.id)
             self.storage.append_monitor_log(
-                monitor.id, "monitor_created", "Monitor initialized and initial download queued.",
-                details={"known_items": len(current_keys), "new_items": len(initial_request.playlist_entries), "task_id": task.id},
+                monitor.id,
+                "monitor_created",
+                "Monitor initialized and initial download queued." if task else "Monitor initialized; collection is currently empty.",
+                details={
+                    "known_items": len(current_keys),
+                    "new_items": len(initial_request.playlist_entries),
+                    "task_id": task.id if task else None,
+                },
             )
         except Exception:
             if task is not None:
@@ -138,7 +147,7 @@ class PlaylistMonitorService:
             monitor = self.storage.get_monitor(monitor_id)
             self.storage.append_monitor_log(monitor.id, "check_started", "Checking collection for updates.")
             analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=monitor.url, account_id=monitor.account_id))
-            if not analysis.is_playlist or not analysis.playlist_entries:
+            if not analysis.is_playlist:
                 raise ValueError("URL did not resolve to a playlist or collection")
             current_keys = [playlist_entry_key(entry) for entry in analysis.playlist_entries]
             seen = set(monitor.seen_entry_keys)
@@ -156,6 +165,10 @@ class PlaylistMonitorService:
                 ) or analysis.title or options.playlist_title
                 options.playlist_entries = new_entries
                 options.playlist_items = None
+                options.task_origin = "monitor_update"
+                options.monitor_id = monitor.id
+                options.monitor_detected_at = utc_now()
+                options.monitor_new_item_count = len(new_entries)
                 task = await self.task_manager.create_task(options)
                 task_id = task.id
             self.storage.append_monitor_log(

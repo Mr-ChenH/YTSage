@@ -159,7 +159,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
     setError(null);
     try {
       const result = await api.createMonitor({ url, interval_minutes: 60, account_id: effectiveAccountId, download_options: buildRequest() });
-      onTask(result.initial_task);
+      if (result.initial_task) onTask(result.initial_task);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

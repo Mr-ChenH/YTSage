@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, Check, CheckCircle2, ChevronDown, Clock3, Copy, Download, ExternalLink, ListFilter, ListVideo, Play, RefreshCw, Search, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, Ban, Check, CheckCircle2, ChevronDown, Clock3, Copy, Download, ExternalLink, ListFilter, ListVideo, Play, Radar, RefreshCw, Search, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import type { TaskResponse, TaskStatus } from '../../api/types';
@@ -75,7 +75,28 @@ function taskMatchesFilter(task: TaskResponse, filter: TaskFilter): boolean {
 }
 
 function taskTimestamp(task: TaskResponse): string {
-  return task.finished_at || task.started_at || task.created_at;
+  const detectedAt = taskOption(task, 'monitor_detected_at');
+  return detectedAt || task.finished_at || task.started_at || task.created_at;
+}
+
+function taskCollectionKey(task: TaskResponse): string | null {
+  const title = taskOption(task, 'playlist_title');
+  return title && Array.isArray(task.options.playlist_entries) && task.options.playlist_entries.length ? `${task.url}\n${title}` : null;
+}
+
+function monitorTaskContext(task: TaskResponse, t: T, inferredBatch = false): { label: string; preview: string } | null {
+  const origin = task.options.task_origin;
+  if (origin !== 'monitor_initial' && origin !== 'monitor_update' && !inferredBatch) return null;
+  const entries = Array.isArray(task.options.playlist_entries) ? task.options.playlist_entries as Array<Record<string, unknown>> : [];
+  const configuredCount = task.options.monitor_new_item_count;
+  const count = typeof configuredCount === 'number' ? configuredCount : entries.length;
+  const titles = entries.map((entry) => typeof entry.title === 'string' ? entry.title : null).filter((title): title is string => Boolean(title));
+  const visibleTitles = titles.slice(0, 2).join(' · ');
+  const remaining = Math.max(0, titles.length - 2);
+  return {
+    label: `${t(origin === 'monitor_initial' ? 'monitorInitialBatch' : origin === 'monitor_update' ? 'monitorUpdateBatch' : 'collectionDownloadBatch')} · ${count} ${t('taskItems')}`,
+    preview: `${visibleTitles}${remaining ? ` +${remaining}` : ''}`,
+  };
 }
 
 function taskErrorSummary(error: string): string {
@@ -106,6 +127,7 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete, onResume, onR
   const percent = percentFor(task, counts);
   const active = activeStatuses.has(task.status);
   const recoverable = failedStatuses.has(task.status);
+  const monitorContext = monitorTaskContext(task, t);
   const [copied, setCopied] = useState(false);
   const [busyAction, setBusyAction] = useState<'resume' | 'restart' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -146,7 +168,7 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete, onResume, onR
   }
   return <div className={`task-detail task-${task.status}`}>
     <header className="task-detail-header">
-      <div className="task-detail-title"><span className={`task-status-icon ${statusTone(task.status)}`}>{(() => { const Icon = statusIcon(task.status); return <Icon aria-hidden="true" />; })()}</span><div><div className="task-title-row"><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div><p>{task.progress.status_text || statusLabel(task.status, t)}</p></div></div>
+      <div className="task-detail-title"><span className={`task-status-icon ${statusTone(task.status)}`}>{(() => { const Icon = statusIcon(task.status); return <Icon aria-hidden="true" />; })()}</span><div><div className="task-title-row"><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div><p>{monitorContext ? `${monitorContext.label}${monitorContext.preview ? ` · ${monitorContext.preview}` : ''}` : task.progress.status_text || statusLabel(task.status, t)}</p></div></div>
       <div className="task-actions">{recoverable && <><button className="primary" onClick={() => void runRecovery('resume')} disabled={busyAction !== null}><Play aria-hidden="true" />{busyAction === 'resume' ? t('working') : t('resumeTask')}</button><button onClick={() => void runRecovery('restart')} disabled={busyAction !== null}><RefreshCw aria-hidden="true" />{busyAction === 'restart' ? t('working') : t('restartTask')}</button></>}{active && <button className="danger" onClick={() => void onCancel(task.id)}><Ban aria-hidden="true" />{t('cancel')}</button>}<button onClick={() => void onDelete(task.id)}><Trash2 aria-hidden="true" />{t('deleteRecord')}</button></div>
     </header>
 
@@ -197,6 +219,14 @@ export function TasksPage({ tasks, api, t, onChanged, onCancel }: TasksPageProps
     onChanged();
   }
 
+  const repeatedCollectionKeys = useMemo(() => {
+    const occurrences = new Map<string, number>();
+    tasks.forEach((task) => {
+      const key = taskCollectionKey(task);
+      if (key) occurrences.set(key, (occurrences.get(key) || 0) + 1);
+    });
+    return new Set([...occurrences].filter(([, count]) => count > 1).map(([key]) => key));
+  }, [tasks]);
   const counts = useMemo(() => ({
     all: tasks.length,
     active: tasks.filter((task) => activeStatuses.has(task.status)).length,
@@ -205,8 +235,12 @@ export function TasksPage({ tasks, api, t, onChanged, onCancel }: TasksPageProps
   }), [tasks]);
   const visibleTasks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return tasks.filter((task) => taskMatchesFilter(task, filter) && (!normalizedQuery || [taskTitle(task), taskSource(task), task.id, task.progress.current_filename].some((value) => value?.toLowerCase().includes(normalizedQuery))));
-  }, [tasks, filter, query]);
+    return tasks.filter((task) => {
+      const collectionKey = taskCollectionKey(task);
+      const context = monitorTaskContext(task, t, Boolean(collectionKey && repeatedCollectionKeys.has(collectionKey)));
+      return taskMatchesFilter(task, filter) && (!normalizedQuery || [taskTitle(task), taskSource(task), task.id, task.progress.current_filename, context?.label, context?.preview].some((value) => value?.toLowerCase().includes(normalizedQuery)));
+    });
+  }, [tasks, filter, query, t, repeatedCollectionKeys]);
   const selectedTask = visibleTasks.find((task) => task.id === selectedId) || visibleTasks[0] || null;
 
   useEffect(() => {
@@ -228,9 +262,11 @@ export function TasksPage({ tasks, api, t, onChanged, onCancel }: TasksPageProps
         const taskCounts = playlistCounts(task);
         const percent = percentFor(task, taskCounts);
         const Icon = statusIcon(task.status);
-        return <button className={`task-queue-item task-${task.status} ${selectedTask?.id === task.id ? 'selected' : ''}`} key={task.id} onClick={() => setSelectedId(task.id)} role="listitem">
+        const collectionKey = taskCollectionKey(task);
+        const monitorContext = monitorTaskContext(task, t, Boolean(collectionKey && repeatedCollectionKeys.has(collectionKey)));
+        return <button className={`task-queue-item task-${task.status} ${monitorContext ? 'monitor-batch' : ''} ${selectedTask?.id === task.id ? 'selected' : ''}`} key={task.id} onClick={() => setSelectedId(task.id)} role="listitem">
           <span className={`task-status-icon ${statusTone(task.status)}`}><Icon aria-hidden="true" /></span>
-          <span className="task-queue-copy"><span><strong title={taskTitle(task)}>{taskTitle(task)}</strong><small>{new Date(taskTimestamp(task)).toLocaleString()}</small></span><span className="task-queue-meta"><span>{taskSource(task)}</span><span>{Math.round(percent)}%</span>{taskCounts ? <span><ListVideo aria-hidden="true" />{taskCounts.completed}/{taskCounts.total}</span> : task.status === 'running' && task.progress.speed && <span>{task.progress.speed}</span>}</span><span className="task-queue-progress"><span style={{ width: `${percent}%` }} /></span></span>
+          <span className="task-queue-copy"><span><strong title={taskTitle(task)}>{taskTitle(task)}</strong><small>{new Date(taskTimestamp(task)).toLocaleString()}</small></span>{monitorContext && <span className="task-queue-batch"><span className="badge blue"><Radar aria-hidden="true" />{monitorContext.label}</span>{monitorContext.preview && <small title={monitorContext.preview}>{monitorContext.preview}</small>}</span>}<span className="task-queue-meta"><span>{taskSource(task)}</span><span>{Math.round(percent)}%</span>{taskCounts ? <span><ListVideo aria-hidden="true" />{taskCounts.completed}/{taskCounts.total}</span> : task.status === 'running' && task.progress.speed && <span>{task.progress.speed}</span>}</span><span className="task-queue-progress"><span style={{ width: `${percent}%` }} /></span></span>
         </button>;
       })}</div>
       {selectedTask && <TaskDetail task={selectedTask} api={api} t={t} onChanged={onChanged} onCancel={onCancel} onDelete={deleteTask} onResume={resumeTask} onRestart={restartTask} />}

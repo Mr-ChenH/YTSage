@@ -162,7 +162,6 @@ def _subtitles_from(data: dict[str, Any]) -> list[SubtitleInfo]:
 
 
 def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None = None, account_service: AccountService | None = None) -> AnalyzeResponse:
-    cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--skip-download"]
     cookie_file = None
     selected_account = None
     if request.account_id:
@@ -182,24 +181,37 @@ def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None 
         cookie_file = cookie_file_for_url(config_dir, request.url)
     requested_profile = cookie_profile_for_url(request.url)
     requested_cookie_status = cookie_profile_status(cookie_file_path(config_dir, requested_profile)) if config_dir is not None else None
-    if cookie_file is not None:
-        cmd.extend(["--cookies", str(cookie_file)])
-    if request.generic_mode:
-        cmd.append("--ignore-no-formats-error")
-    cmd.append(request.url)
+    favorite_resource_id = bilibili.favorite_resource_id(request.url)
+    account_favorite = None
+    if favorite_resource_id and selected_account is not None and account_service is not None:
+        try:
+            account_favorite = account_service.list_all_entries(selected_account.id, favorite_resource_id)
+        except BilibiliProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="yt-dlp is not installed") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="URL analysis timed out") from exc
-    if result.returncode != 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.stderr.strip() or result.stdout.strip() or "yt-dlp analysis failed")
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="yt-dlp returned invalid JSON") from exc
+    if account_favorite is not None:
+        # The account provider is authoritative for favorites and also handles empty collections.
+        data: dict[str, Any] = {}
+    else:
+        cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--skip-download"]
+        if cookie_file is not None:
+            cmd.extend(["--cookies", str(cookie_file)])
+        if request.generic_mode:
+            cmd.append("--ignore-no-formats-error")
+        cmd.append(request.url)
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="yt-dlp is not installed") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="URL analysis timed out") from exc
+        if result.returncode != 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.stderr.strip() or result.stdout.strip() or "yt-dlp analysis failed")
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="yt-dlp returned invalid JSON") from exc
 
     raw: dict[str, Any] = {key: _as_str(data.get(key)) for key in ("extractor", "extractor_key", "webpage_url", "original_url", "display_id")}
     if selected_account is not None:
@@ -238,13 +250,9 @@ def analyze(request: AnalyzeRequest, timeout: int = 60, config_dir: Path | None 
     playlist_entries = [_playlist_entry(index, item) for index, item in enumerate(entry_items, start=1)]
 
     collection_title = collection_cover = None
-    favorite_resource_id = bilibili.favorite_resource_id(request.url)
-    if favorite_resource_id and selected_account is not None and account_service is not None:
-        try:
-            favorite_resource, favorite_entries = account_service.list_all_entries(selected_account.id, favorite_resource_id)
-            playlist_entries = account_service.expand_playlist_entries(selected_account.id, favorite_entries)
-        except BilibiliProviderError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if account_favorite is not None and selected_account is not None and account_service is not None:
+        favorite_resource, favorite_entries = account_favorite
+        playlist_entries = account_service.expand_playlist_entries(selected_account.id, favorite_entries)
         collection_title = favorite_resource.title
         collection_cover = favorite_resource.cover_url
         is_playlist = True

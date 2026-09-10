@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import requests
 
 from ..analyzers.bilibili import _json_response, _load_cookie_jar, as_dict_list, as_float, as_int, as_str
-from ..models import AccountResource, AccountResourceEntriesResponse, AccountResourceListResponse, PageInfo, PlatformAccount, PlaylistEntry
+from ..models import AccountResource, AccountResourceEntriesResponse, AccountResourceListResponse, PageInfo, PlatformAccount, PlaylistEntry, PlaylistEntryGroup
 
 _API = "https://api.bilibili.com"
 _AVATAR_HOST_SUFFIXES = (".hdslb.com", ".biliimg.com")
@@ -208,7 +208,7 @@ class BilibiliProvider:
         expanded: list[PlaylistEntry] = []
         visited_resources: set[str] = set()
         for entry in entries:
-            expanded.extend(self._expand_entry(account, cookie_file, entry, visited_resources, depth=0))
+            expanded.extend(self._expand_entry(account, cookie_file, entry, visited_resources, depth=0, group_path=()))
         deduplicated: list[PlaylistEntry] = []
         seen: set[str] = set()
         for entry in expanded:
@@ -227,9 +227,10 @@ class BilibiliProvider:
         visited_resources: set[str],
         *,
         depth: int,
+        group_path: tuple[PlaylistEntryGroup, ...],
     ) -> list[PlaylistEntry]:
         if not entry.is_available:
-            return [entry]
+            return [entry.model_copy(update={"group_path": list(group_path)})]
         if depth > 4:
             raise BilibiliProviderError("resource_nested_too_deep", "Nested Bilibili collections are too deep to expand.", 422)
         if entry.entry_type == "favorite_collection" and entry.resource_id:
@@ -237,20 +238,42 @@ class BilibiliProvider:
                 return []
             visited_resources.add(entry.resource_id)
             resource, children = self.list_all_entries(account, cookie_file, entry.resource_id)
+            group = PlaylistEntryGroup(
+                id=entry.id or entry.resource_id,
+                title=entry.title or resource.title,
+                entry_type="favorite_collection",
+            )
             result: list[PlaylistEntry] = []
             for child in children:
-                for leaf in self._expand_entry(account, cookie_file, child, visited_resources, depth=depth + 1):
-                    result.append(leaf.model_copy(update={
-                        "parent_id": entry.id or entry.resource_id,
-                        "parent_title": entry.title or resource.title,
-                    }))
+                result.extend(self._expand_entry(
+                    account,
+                    cookie_file,
+                    child,
+                    visited_resources,
+                    depth=depth + 1,
+                    group_path=(*group_path, group),
+                ))
             return result
         if entry.entry_type != "multipart_video" or not entry.url:
-            return [entry.model_copy(update={"resource_id": None, "item_count": None})]
+            parent = group_path[-1] if group_path else None
+            return [entry.model_copy(update={
+                "resource_id": None,
+                "item_count": None,
+                "parent_id": entry.parent_id or (parent.id if parent else None),
+                "parent_title": entry.parent_title or (parent.title if parent else None),
+                "group_path": list(group_path),
+            })]
 
         bvid = as_str(entry.id)
         if not bvid or not bvid.startswith("BV"):
-            return [entry.model_copy(update={"entry_type": "video", "item_count": None})]
+            parent = group_path[-1] if group_path else None
+            return [entry.model_copy(update={
+                "entry_type": "video",
+                "item_count": None,
+                "parent_id": entry.parent_id or (parent.id if parent else None),
+                "parent_title": entry.parent_title or (parent.title if parent else None),
+                "group_path": list(group_path),
+            })]
         payload = self._get(cookie_file, "/x/web-interface/view", params={"bvid": bvid})
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         pages = as_dict_list(data.get("pages"))
@@ -259,6 +282,8 @@ class BilibiliProvider:
             pages = [{"page": index, "part": f"P{index}"} for index in range(1, count + 1)]
         owner = data.get("owner") if isinstance(data.get("owner"), dict) else {}
         parent_title = entry.title or as_str(data.get("title")) or bvid
+        multipart_group = PlaylistEntryGroup(id=bvid, title=parent_title, entry_type="multipart_video")
+        part_group_path = [*group_path, multipart_group]
         parts: list[PlaylistEntry] = []
         for position, page in enumerate(pages, start=1):
             part_index = as_int(page.get("page")) or position
@@ -276,6 +301,7 @@ class BilibiliProvider:
                 parent_title=parent_title,
                 part_index=part_index,
                 part_count=len(pages),
+                group_path=part_group_path,
             ))
         return parts
 

@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 TaskStatus = Literal["queued", "running", "completed", "failed", "cancelled", "interrupted"]
 MediaType = Literal["video", "audio", "subtitle", "other"]
 DownloadMode = Literal["video", "audio", "subtitles"]
+TaskOrigin = Literal["manual", "monitor_initial", "monitor_update"]
 PlaylistEntryType = Literal["video", "multipart_video", "favorite_collection", "audio"]
+PlaylistEntryGroupType = Literal["favorite_collection", "multipart_video"]
 
 
 class FormatInfo(BaseModel):
@@ -37,6 +39,12 @@ class AnalyzeRequest(BaseModel):
     account_id: str | None = None
 
 
+class PlaylistEntryGroup(BaseModel):
+    id: str
+    title: str
+    entry_type: PlaylistEntryGroupType
+
+
 class PlaylistEntry(BaseModel):
     index: int
     id: str | None = None
@@ -55,6 +63,7 @@ class PlaylistEntry(BaseModel):
     parent_title: str | None = None
     part_index: int | None = None
     part_count: int | None = None
+    group_path: list[PlaylistEntryGroup] = Field(default_factory=list)
 
 
 class AnalyzeResponse(BaseModel):
@@ -91,6 +100,10 @@ class CreateTaskRequest(BaseModel):
     playlist_items: str | None = None
     playlist_title: str | None = None
     playlist_entries: list[PlaylistEntry] = Field(default_factory=list)
+    task_origin: TaskOrigin = "manual"
+    monitor_id: str | None = None
+    monitor_detected_at: str | None = None
+    monitor_new_item_count: int | None = Field(default=None, ge=0)
     filename_template: str = "%(title)s_%(resolution)s_[%(id)s].%(ext)s"
 
 
@@ -181,7 +194,7 @@ class PlaylistMonitorResponse(BaseModel):
 
 class PlaylistMonitorCreateResponse(BaseModel):
     monitor: PlaylistMonitorResponse
-    initial_task: TaskResponse
+    initial_task: TaskResponse | None = None
 
 
 class FileEntry(BaseModel):

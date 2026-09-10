@@ -31,6 +31,19 @@ def test_list_files_filters_direct_playable_media_before_pagination(tmp_path: Pa
     assert result.folders == ["course", "course/nested"]
 
 
+def test_list_files_includes_ancestor_folders_for_deep_media(tmp_path: Path) -> None:
+    root = tmp_path / "downloads"
+    nested = root / "favorites" / "course" / "chapter"
+    nested.mkdir(parents=True)
+    (nested / "lesson.mp4").write_bytes(b"video")
+    request = Mock()
+    request.url_for.side_effect = lambda name, file_id: f"http://test/{name}/{file_id}"
+
+    result = list_files(root, request, limit=10)
+
+    assert result.folders == ["favorites", "favorites/course", "favorites/course/chapter"]
+
+
 def test_delete_download_file_and_empty_parent(tmp_path: Path) -> None:
     root = tmp_path / "downloads"
     folder = root / "course"

@@ -112,6 +112,38 @@ def test_analyze_expands_account_favorite_collections(tmp_path: Path) -> None:
     assert response.raw["playlist_source"] == "bilibili_account_favorite"
 
 
+def test_analyze_recognizes_empty_account_favorite_without_ytdlp(tmp_path: Path) -> None:
+    cookie_path = tmp_path / "cookies.txt"
+    cookie_path.write_text("# Netscape HTTP Cookie File\n.bilibili.com\tTRUE\t/\tTRUE\t4102444800\tSESSDATA\ttest\n", encoding="utf-8")
+    account = Mock(id="account", platform="bilibili", label="Primary", state="valid")
+    account_service = Mock()
+    account_service.storage.get_account.return_value = account
+    account_service.resolve_cookie_file.return_value = cookie_path
+    account_service.list_all_entries.return_value = (
+        AccountResource(
+            id="created_favorite:33", account_id="account", platform="bilibili",
+            resource_type="created_favorite", external_id="33", title="Empty favorite",
+            source_url="https://space.bilibili.com/1001/favlist?fid=33",
+        ),
+        [],
+    )
+    account_service.expand_playlist_entries.return_value = []
+
+    with patch("ytsage.server.services.analyzer.subprocess.run") as run:
+        response = analyze(
+            AnalyzeRequest(url="https://space.bilibili.com/1001/favlist?fid=33", account_id="account"),
+            config_dir=tmp_path,
+            account_service=account_service,
+        )
+
+    run.assert_not_called()
+    assert response.is_playlist is True
+    assert response.title == "Empty favorite"
+    assert response.playlist_count == 0
+    assert response.playlist_entries == []
+    assert response.raw["playlist_source"] == "bilibili_account_favorite"
+
+
 def test_analyze_reports_expired_cookie_without_passing_it_to_ytdlp(tmp_path: Path) -> None:
     _write_cookie(tmp_path / "cookies-youtube.txt", 1)
 

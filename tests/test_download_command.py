@@ -1,11 +1,11 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from ytsage.server.models import CreateTaskRequest, PlaylistEntry, TaskProgress
+from ytsage.server.models import CreateTaskRequest, PlaylistEntry, PlaylistEntryGroup, TaskProgress
 from ytsage.server.services.analyzer import _bilibili_collection_from_api
 from ytsage.server.services.dependencies import update_runtime_dependencies, ytdlp_base_command
 from ytsage.server.services.download_service import build_download_command, parse_progress_line
-from ytsage.server.services.task_manager import _playlist_item_filename_template
+from ytsage.server.services.task_manager import _playlist_entry_filename_template, _playlist_item_filename_template
 
 
 def test_dependency_update_does_not_install_bundled_ffmpeg_when_system_ffmpeg_exists() -> None:
@@ -65,6 +65,21 @@ def test_playlist_item_filename_template_resolves_playlist_fields() -> None:
     template = "%(playlist_title)s/%(playlist_index)02d-%(title)s.%(ext)s"
 
     assert _playlist_item_filename_template(template, "Course", 7) == "Course/07-%(title)s.%(ext)s"
+
+
+def test_playlist_entry_filename_template_preserves_collection_hierarchy() -> None:
+    template = "%(playlist_title)s/%(playlist_index)02d-%(title)s.%(ext)s"
+    entry = PlaylistEntry(
+        index=7,
+        group_path=[
+            PlaylistEntryGroup(id="collection", title="Frontend/Course", entry_type="favorite_collection"),
+            PlaylistEntryGroup(id="multipart", title="Chapter: One", entry_type="multipart_video"),
+        ],
+    )
+
+    assert _playlist_entry_filename_template(template, "My favorites", entry) == (
+        "My favorites/Frontend_Course/Chapter_ One/07-%(title)s.%(ext)s"
+    )
 
 
 def test_single_video_download_uses_title_directory() -> None:

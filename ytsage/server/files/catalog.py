@@ -103,11 +103,13 @@ def list_files(root: Path, request: Request, query: str | None = None, folder: s
         if not path.is_file() or path.name.startswith(".ytsage-"):
             continue
         rel = path.relative_to(root).as_posix()
-        parent = Path(rel).parent.as_posix()
+        parent_path = Path(rel).parent
+        parent = parent_path.as_posix()
         if parent == ".":
             parent = ""
         if parent:
-            folders.add(parent)
+            parent_parts = parent_path.parts
+            folders.update(Path(*parent_parts[:depth]).as_posix() for depth in range(1, len(parent_parts) + 1))
         if folder_filter:
             if direct_only and parent != folder_filter:
                 continue

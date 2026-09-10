@@ -250,8 +250,13 @@ def test_bilibili_provider_expands_multipart_and_nested_collection(tmp_path: Pat
             {"page": 1, "part": "Intro", "duration": 60},
             {"page": 2, "part": "Lesson", "duration": 120},
         ]}},
-        {"code": 0, "data": {"info": {"id": 33, "title": "Nested", "media_count": 1}, "medias": [
+        {"code": 0, "data": {"info": {"id": 33, "title": "Nested", "media_count": 2}, "medias": [
             {"id": 9, "type": 2, "bvid": "BVnested", "title": "Nested video", "page": 1},
+            {"id": 10, "type": 2, "bvid": "BVnestedcourse", "title": "Nested course", "page": 2},
+        ]}},
+        {"code": 0, "data": {"title": "Nested course", "owner": {"name": "Teacher"}, "pages": [
+            {"page": 1, "part": "Nested intro", "duration": 30},
+            {"page": 2, "part": "Nested lesson", "duration": 45},
         ]}},
     ])
     provider = BilibiliProvider(http=http)
@@ -264,12 +269,18 @@ def test_bilibili_provider_expands_multipart_and_nested_collection(tmp_path: Pat
 
     expanded = provider.expand_entries(account, cookie, entries)
 
-    assert [entry.index for entry in expanded] == [1, 2, 3]
-    assert [entry.title for entry in expanded] == ["Intro", "Lesson", "Nested video"]
+    assert [entry.index for entry in expanded] == [1, 2, 3, 4, 5]
+    assert [entry.title for entry in expanded] == ["Intro", "Lesson", "Nested video", "Nested intro", "Nested lesson"]
     assert expanded[0].url == "https://www.bilibili.com/video/BVmultipage/?p=1"
     assert expanded[1].part_index == 2
     assert expanded[1].part_count == 2
     assert expanded[2].parent_title == "Saved list"
+    assert [(group.title, group.entry_type) for group in expanded[0].group_path] == [("Course", "multipart_video")]
+    assert [(group.title, group.entry_type) for group in expanded[2].group_path] == [("Saved list", "favorite_collection")]
+    assert [(group.title, group.entry_type) for group in expanded[3].group_path] == [
+        ("Saved list", "favorite_collection"),
+        ("Nested course", "multipart_video"),
+    ]
 
 
 def test_flat_playlist_marks_invalid_video_unavailable():

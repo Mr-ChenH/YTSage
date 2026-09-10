@@ -6,9 +6,25 @@ from typing import Any
 from ..models import PlaylistEntry, TaskProgress, TaskResponse
 
 
+def _safe_directory_name(value: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    return cleaned[:120] or "Untitled"
+
+
 def playlist_item_filename_template(template: str, title: str, index: int) -> str:
-    result = template.replace("%(playlist_title)s", title).replace("%(playlist_index)s", str(index))
+    result = template.replace("%(playlist_title)s", _safe_directory_name(title)).replace("%(playlist_index)s", str(index))
     return re.sub(r"%\(playlist_index\)0?\d*d", lambda match: format(index, match.group(0).split(")", 1)[1][:-1] or "d"), result)
+
+
+def playlist_entry_filename_template(template: str, title: str, entry: PlaylistEntry) -> str:
+    result = playlist_item_filename_template(template, title, entry.index)
+    folders = [_safe_directory_name(group.title) for group in entry.group_path]
+    if not folders:
+        return result
+    separator_index = max(result.rfind("/"), result.rfind("\\"))
+    directory = result[:separator_index] if separator_index >= 0 else ""
+    filename = result[separator_index + 1:] if separator_index >= 0 else result
+    return "/".join([part for part in [directory, *folders, filename] if part])
 
 
 def playlist_entries(task: TaskResponse) -> list[PlaylistEntry]:

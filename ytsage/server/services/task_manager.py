@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import ServerConfig
 from ..downloads.executor import DownloadExecutor
-from ..downloads.playlist import copy_progress, parse_queue_item, playlist_entries, playlist_item_filename_template
+from ..downloads.playlist import copy_progress, parse_queue_item, playlist_entries, playlist_entry_filename_template, playlist_item_filename_template
 from ..downloads.process import decode_output_line, terminate_process
 from ..models import CreateTaskRequest, HistoryEntry, PlaylistEntry, TaskEvent, TaskProgress, TaskResponse
 from .cookies import COOKIE_PROFILES, cookie_file_path, cookie_profile_for_url
@@ -26,6 +26,10 @@ def _decode_output_line(raw: bytes) -> str:
 
 def _playlist_item_filename_template(template: str, title: str, index: int) -> str:
     return playlist_item_filename_template(template, title, index)
+
+
+def _playlist_entry_filename_template(template: str, title: str, entry: PlaylistEntry) -> str:
+    return playlist_entry_filename_template(template, title, entry)
 
 
 class TaskManager:
@@ -268,10 +272,10 @@ class TaskManager:
             item_request.url = entry.url or entry.webpage_url or request.url
             item_request.playlist_items = None
             item_request.playlist_entries = []
-            item_request.filename_template = _playlist_item_filename_template(
+            item_request.filename_template = _playlist_entry_filename_template(
                 request.filename_template,
                 request.playlist_title or "playlist",
-                entry.index,
+                entry,
             )
             progress.playlist_current_index = entry.index
             progress.playlist_last_index = entry.index
@@ -331,10 +335,10 @@ class TaskManager:
         request.url = entry.url or entry.webpage_url or request.url
         request.playlist_items = None
         request.playlist_entries = []
-        request.filename_template = _playlist_item_filename_template(
+        request.filename_template = _playlist_entry_filename_template(
             request.filename_template,
             request.playlist_title or "playlist",
-            playlist_index,
+            entry,
         )
         progress = self._copy_progress(task.progress)
         progress.playlist_current_index = playlist_index
@@ -448,9 +452,16 @@ class TaskManager:
             candidate = path if path.is_dir() else path.parent
             try:
                 candidate.resolve().relative_to(download_root.resolve())
-                if candidate.resolve() != download_root.resolve():
+                rendered_template = _playlist_item_filename_template(template, playlist_title, 1).replace("\\", "/")
+                template_directory = rendered_template.rpartition("/")[0]
+                if template_directory and "%(" not in template_directory:
+                    expected_root = download_root.joinpath(*template_directory.split("/"))
+                    expected_root.resolve().relative_to(download_root.resolve())
+                    candidate.resolve().relative_to(expected_root.resolve())
+                    output = expected_root
+                elif candidate.resolve() != download_root.resolve():
                     output = candidate
-            except ValueError:
+            except (ValueError, OSError):
                 pass
         if output.is_dir():
             files = [item for item in output.rglob("*") if item.is_file()]

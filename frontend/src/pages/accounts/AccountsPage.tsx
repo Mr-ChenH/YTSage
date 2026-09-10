@@ -74,6 +74,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
   const [replacementCookieContent, setReplacementCookieContent] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const resourceRequest = useRef(0);
   const entryRequest = useRef(0);
   const selected = accounts.find((account) => account.id === selectedId) || null;
@@ -90,6 +91,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     entryRequest.current += 1;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const result = await api.accountResources(accountId, nextKind, offset, pageSize);
       if (requestId !== resourceRequest.current) return;
@@ -114,6 +116,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     const requestId = ++entryRequest.current;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const result = await api.accountResourceEntries(resource.account_id, resource.id, offset, pageSize);
       if (requestId !== entryRequest.current) return;
@@ -134,6 +137,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
   useEffect(() => {
     setReplacingCookies(false);
     setReplacementCookieContent('');
+    setNotice(null);
   }, [selectedId]);
   useEffect(() => {
     if (!selectedId) return;
@@ -188,6 +192,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
   async function accountAction(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       await action();
       await loadAccounts(selectedId || undefined);
@@ -230,12 +235,14 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     if (!selected || !opened) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       const result = await api.createMonitor({
         url: opened.resource.source_url, account_id: selected.id, interval_minutes: 60,
         download_options: downloadOptions(opened.resource, []),
       });
-      onTask(result.initial_task);
+      if (result.initial_task) onTask(result.initial_task);
+      else setNotice(t('emptyCollectionMonitorCreated'));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -258,6 +265,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
 
     <main className="account-detail">
       {error && <p className="account-error">{error}</p>}
+      {notice && <p className="account-notice"><CheckCircle2 aria-hidden="true" />{notice}</p>}
       {adding && <section className="account-add-form"><header><div><h2>{t('addBilibiliAccount')}</h2><p>{t('accountCookieHint')}</p></div><button onClick={() => setAdding(false)}>{t('cancel')}</button></header><div><label>{t('accountLabel')}<input value={label} onChange={(event) => setLabel(event.target.value)} /></label><label>{t('cookieData')}<textarea value={cookieContent} onChange={(event) => setCookieContent(event.target.value)} placeholder={t('cookiePastePlaceholder')} /></label><label className="file-button"><input type="file" accept=".txt,.cookies,.json" onChange={(event) => event.target.files?.[0]?.text().then(setCookieContent)} /><Upload aria-hidden="true" />{t('chooseCookieFile')}</label><label className="check"><input type="checkbox" checked={makeDefault} onChange={(event) => setMakeDefault(event.target.checked)} />{t('setDefaultAccount')}</label></div><footer><button className="primary" disabled={busy || !label.trim() || !cookieContent.trim()} onClick={() => void createAccount()}>{busy ? <LoaderCircle className="spin" /> : <ShieldCheck />}{t('verifyAndAdd')}</button></footer></section>}
 
       {!adding && selected && <>

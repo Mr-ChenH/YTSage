@@ -152,6 +152,12 @@ export interface SubtitleInfo {
   formats: string[];
 }
 
+export interface PlaylistEntryGroup {
+  id: string;
+  title: string;
+  entry_type: Extract<PlaylistEntryType, 'favorite_collection' | 'multipart_video'>;
+}
+
 export interface PlaylistEntry {
   index: number;
   id?: string | null;
@@ -170,6 +176,7 @@ export interface PlaylistEntry {
   parent_title?: string | null;
   part_index?: number | null;
   part_count?: number | null;
+  group_path?: PlaylistEntryGroup[];
 }
 
 export interface AnalyzeResponse {
@@ -206,6 +213,10 @@ export interface CreateTaskRequest {
   playlist_items?: string | null;
   playlist_title?: string | null;
   playlist_entries: PlaylistEntry[];
+  task_origin?: 'manual' | 'monitor_initial' | 'monitor_update';
+  monitor_id?: string | null;
+  monitor_detected_at?: string | null;
+  monitor_new_item_count?: number | null;
   filename_template: string;
 }
 
@@ -274,7 +285,7 @@ export interface PlaylistMonitorCreate {
 
 export interface PlaylistMonitorCreateResponse {
   monitor: PlaylistMonitorResponse;
-  initial_task: TaskResponse;
+  initial_task?: TaskResponse | null;
 }
 
 export interface PlaylistMonitorLog {
