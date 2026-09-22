@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from ..models import AccountCreateRequest, AccountResponse, AccountResourceEntriesResponse, AccountResourceListResponse, AccountUpdateRequest
+from ..models import AccountCreateRequest, AccountResponse, AccountResourceEntriesResponse, AccountResourceListResponse, AccountUpdateRequest, BilibiliQrPollResponse, BilibiliQrStartRequest, BilibiliQrStartResponse
 from ..providers.bilibili import BilibiliProviderError, _AVATAR_HOST_SUFFIXES, _HEADERS, normalize_image_url
 from ..services.accounts import AccountConflictError, AccountService
 
@@ -59,6 +59,39 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/bilibili/qr", response_model=BilibiliQrStartResponse, status_code=201)
+    def start_bilibili_qr(request: BilibiliQrStartRequest) -> BilibiliQrStartResponse:
+        try:
+            return service.start_qr_login(request)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Account not found") from exc
+        except BilibiliProviderError as exc:
+            raise _provider_http_error(exc) from exc
+        except AccountConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/bilibili/qr/{challenge_id}", response_model=BilibiliQrPollResponse)
+    def poll_bilibili_qr(challenge_id: str) -> BilibiliQrPollResponse:
+        try:
+            return service.poll_qr_login(challenge_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="QR login challenge not found or expired") from exc
+        except BilibiliProviderError as exc:
+            raise _provider_http_error(exc) from exc
+        except AccountConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/{account_id}/refresh", response_model=AccountResponse)
+    def refresh_account(account_id: str, force: bool = Query(default=False)) -> AccountResponse:
+        try:
+            return service.refresh(account_id, force=force)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Account not found") from exc
+        except BilibiliProviderError as exc:
+            raise _provider_http_error(exc) from exc
+        except AccountConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get("/{account_id}", response_model=AccountResponse)
     def get_account(account_id: str) -> AccountResponse:
@@ -148,9 +181,10 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
         resource_id: str,
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=20, ge=1, le=100),
+        known_total: int | None = Query(default=None, ge=0),
     ) -> AccountResourceEntriesResponse:
         try:
-            return service.list_entries(account_id, resource_id, offset, limit)
+            return service.list_entries(account_id, resource_id, offset, limit, known_total)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
         except BilibiliProviderError as exc:

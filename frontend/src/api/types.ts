@@ -79,6 +79,11 @@ export interface PlatformAccount {
   vip_type?: number | null;
   state: AccountState;
   cookie_status: CookieProfileStatus;
+  login_method: 'cookie' | 'qr';
+  auto_refresh: boolean;
+  last_refresh_at?: string | null;
+  last_refresh_check_at?: string | null;
+  last_refresh_error?: string | null;
   is_default: boolean;
   last_verified_at?: string | null;
   last_error?: string | null;
@@ -97,6 +102,18 @@ export interface AccountUpdateRequest {
   label?: string;
   cookie_content?: string;
   make_default?: boolean;
+}
+
+export interface BilibiliQrStartResponse {
+  challenge_id: string;
+  qr_url: string;
+  expires_at: string;
+}
+
+export interface BilibiliQrPollResponse {
+  status: 'pending' | 'scanned' | 'expired' | 'completed';
+  message: string;
+  account?: PlatformAccount | null;
 }
 
 export interface AccountResource {

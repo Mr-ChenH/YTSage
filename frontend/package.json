@@ -9,6 +9,7 @@
     "@vitejs/plugin-react": "5.1.4",
     "artplayer": "^5.4.0",
     "lucide-react": "^0.468.0",
+    "qrcode.react": "^4.2.0",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",

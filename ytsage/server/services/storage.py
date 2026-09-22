@@ -143,6 +143,16 @@ class Storage:
                 )
                 """
             )
+            account_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(platform_accounts)").fetchall()}
+            for column, definition in (
+                ("login_method", "TEXT NOT NULL DEFAULT 'cookie'"),
+                ("auto_refresh", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_refresh_at", "TEXT"),
+                ("last_refresh_check_at", "TEXT"),
+                ("last_refresh_error", "TEXT"),
+            ):
+                if column not in account_columns:
+                    self._conn.execute(f"ALTER TABLE platform_accounts ADD COLUMN {column} {definition}")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_platform_accounts_platform ON platform_accounts (platform, created_at)")
             self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_accounts_default ON platform_accounts (platform) WHERE is_default = 1")
 
@@ -291,7 +301,7 @@ class Storage:
     def update_account(self, account_id: str, **fields: Any) -> PlatformAccount:
         if not fields:
             return self.get_account(account_id)
-        allowed = {"label", "external_id", "display_name", "avatar_url", "vip_type", "state", "cookie_filename", "is_default", "last_verified_at", "last_error"}
+        allowed = {"label", "external_id", "display_name", "avatar_url", "vip_type", "state", "cookie_filename", "login_method", "auto_refresh", "last_refresh_at", "last_refresh_check_at", "last_refresh_error", "is_default", "last_verified_at", "last_error"}
         if unknown := set(fields) - allowed:
             raise ValueError(f"Unsupported account fields: {', '.join(sorted(unknown))}")
         now = utc_now()
@@ -331,7 +341,11 @@ class Storage:
         return PlatformAccount(
             id=row["id"], platform=row["platform"], label=row["label"], external_id=row["external_id"],
             display_name=row["display_name"], avatar_url=row["avatar_url"], vip_type=row["vip_type"],
-            state=row["state"], cookie_filename=row["cookie_filename"], is_default=bool(row["is_default"]),
+            state=row["state"], cookie_filename=row["cookie_filename"],
+            login_method=row["login_method"], auto_refresh=bool(row["auto_refresh"]),
+            last_refresh_at=row["last_refresh_at"], last_refresh_check_at=row["last_refresh_check_at"],
+            last_refresh_error=row["last_refresh_error"],
+            is_default=bool(row["is_default"]),
             last_verified_at=row["last_verified_at"], last_error=row["last_error"], created_at=row["created_at"], updated_at=row["updated_at"],
         )
 

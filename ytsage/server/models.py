@@ -276,6 +276,11 @@ class PlatformAccount(BaseModel):
     vip_type: int | None = None
     state: AccountState = "unknown"
     cookie_filename: str
+    login_method: Literal["cookie", "qr"] = "cookie"
+    auto_refresh: bool = False
+    last_refresh_at: str | None = None
+    last_refresh_check_at: str | None = None
+    last_refresh_error: str | None = None
     is_default: bool = False
     last_verified_at: str | None = None
     last_error: str | None = None
@@ -293,11 +298,34 @@ class AccountResponse(BaseModel):
     vip_type: int | None = None
     state: AccountState
     cookie_status: CookieProfileStatus
+    login_method: Literal["cookie", "qr"] = "cookie"
+    auto_refresh: bool = False
+    last_refresh_at: str | None = None
+    last_refresh_check_at: str | None = None
+    last_refresh_error: str | None = None
     is_default: bool
     last_verified_at: str | None = None
     last_error: str | None = None
     created_at: str
     updated_at: str
+
+
+class BilibiliQrStartRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    make_default: bool = False
+    account_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class BilibiliQrStartResponse(BaseModel):
+    challenge_id: str
+    qr_url: str
+    expires_at: str
+
+
+class BilibiliQrPollResponse(BaseModel):
+    status: Literal["pending", "scanned", "expired", "completed"]
+    message: str
+    account: AccountResponse | None = None
 
 
 class AccountResource(BaseModel):

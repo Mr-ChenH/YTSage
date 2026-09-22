@@ -21,6 +21,8 @@ function upsertTask(tasks: TaskResponse[], nextTask: TaskResponse): TaskResponse
     : [nextTask, ...tasks];
 }
 
+const assetBase = import.meta.env.BASE_URL;
+
 export function App() {
   const [page, setPage] = useState<Page>(() => {
     const hash = window.location.hash.replace('#', '') as Page;
@@ -145,7 +147,7 @@ export function App() {
 
   return <div className="shell">
     <aside className="sidebar glass-surface">
-      <div className="brand"><img src="/static/assets/ytsage-wordmark.svg" alt="YTSage" /><span className="brand-edition">Studio</span></div>
+      <div className="brand"><img src={`${assetBase}assets/ytsage-wordmark.svg`} alt="YTSage" /><span className="brand-edition">Studio</span></div>
       <nav className="nav" aria-label="Primary">{navItems.map(([id, Icon, labelKey]) => <button key={id} className={page === id ? 'active' : ''} onClick={() => id === 'files' ? openFilesPage() : changePage(id)} title={t(labelKey)}><Icon className="nav-icon" aria-hidden="true" /><span className="nav-label">{t(labelKey)}</span></button>)}</nav>
       <div className="sidebar-status"><span className={`status-orb ${health?.healthy ? 'online' : 'attention'}`} /><span><strong>YTSage Server</strong><small>{health?.healthy ? t('healthy') : t('needsTools')}</small></span></div>
     </aside>

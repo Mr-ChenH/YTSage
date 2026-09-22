@@ -32,14 +32,17 @@ from .services.task_manager import TaskManager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     manager: TaskManager = app.state.task_manager
+    account_service: AccountService = app.state.account_service
     monitor_service: PlaylistMonitorService = app.state.monitor_service
     ensure_runtime_dependencies()
     await manager.start()
+    await account_service.start()
     await monitor_service.start()
     try:
         yield
     finally:
         await monitor_service.stop()
+        await account_service.stop()
         await manager.stop()
 
 

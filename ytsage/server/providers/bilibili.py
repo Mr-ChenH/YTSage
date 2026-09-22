@@ -7,17 +7,30 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import binascii
+import re
+import time
 import requests
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from requests.cookies import RequestsCookieJar
 
 from ..analyzers.bilibili import _json_response, _load_cookie_jar, as_dict_list, as_float, as_int, as_str
 from ..models import AccountResource, AccountResourceEntriesResponse, AccountResourceListResponse, PageInfo, PlatformAccount, PlaylistEntry, PlaylistEntryGroup
 
 _API = "https://api.bilibili.com"
 _AVATAR_HOST_SUFFIXES = (".hdslb.com", ".biliimg.com")
+_PASSPORT_API = "https://passport.bilibili.com"
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
     "Referer": "https://www.bilibili.com/",
 }
+_REFRESH_PUBLIC_KEY = b"""-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDLgd2OAkcGVtoE3ThUREbio0Eg
+Uc/prcajMKXvkCKFCWhJYJcLkcM2DKKcSeFpD/j6Boy538YXnR6VhcuUJOhH2x71
+nzPjfdTcqMz7djHum0qSZA0AyCBDABUqCrfNgCiJ00Ra7GmRj+YCK1NJEuewlb40
+JNrRuoEUXpabUzGB8QIDAQAB
+-----END PUBLIC KEY-----"""
 
 
 class BilibiliProviderError(Exception):
@@ -48,12 +61,181 @@ def normalize_image_url(value: Any) -> str | None:
     return url
 
 
+@dataclass
+class BilibiliQrSession:
+    session: Any
+    qr_url: str
+    qrcode_key: str
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class BilibiliQrPoll:
+    status: str
+    message: str
+    cookies: RequestsCookieJar | None = None
+    refresh_token: str | None = None
+
+
+@dataclass(frozen=True)
+class BilibiliRefreshResult:
+    cookies: RequestsCookieJar
+    refresh_token: str
+    old_refresh_token: str
+
+
 class BilibiliProvider:
     platform = "bilibili"
 
     def __init__(self, timeout: int = 15, http: Any = requests) -> None:
         self.timeout = timeout
         self.http = http
+
+    def start_qr_login(self) -> BilibiliQrSession:
+        session = requests.Session()
+        try:
+            response = session.get(
+                f"{_PASSPORT_API}/x/passport-login/web/qrcode/generate",
+                headers=_HEADERS,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise BilibiliProviderError("provider_unavailable", "Bilibili is currently unavailable.", 503) from exc
+        payload = self._response_payload(response)
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        qr_url = as_str(data.get("url"))
+        qrcode_key = as_str(data.get("qrcode_key"))
+        if not qr_url or not qrcode_key:
+            raise BilibiliProviderError("provider_response_invalid", "Bilibili returned an incomplete QR login challenge.")
+        return BilibiliQrSession(session=session, qr_url=qr_url, qrcode_key=qrcode_key, expires_at=time.time() + 180)
+
+    def poll_qr_login(self, challenge: BilibiliQrSession) -> BilibiliQrPoll:
+        if time.time() >= challenge.expires_at:
+            return BilibiliQrPoll("expired", "The Bilibili QR code has expired.")
+        try:
+            response = challenge.session.get(
+                f"{_PASSPORT_API}/x/passport-login/web/qrcode/poll",
+                params={"qrcode_key": challenge.qrcode_key},
+                headers=_HEADERS,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise BilibiliProviderError("provider_unavailable", "Bilibili is currently unavailable.", 503) from exc
+        payload = self._response_payload(response)
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        state = as_int(data.get("code"))
+        if state == 86101:
+            return BilibiliQrPoll("pending", "Waiting for the Bilibili app to scan the QR code.")
+        if state == 86090:
+            return BilibiliQrPoll("scanned", "QR code scanned. Confirm the login in the Bilibili app.")
+        if state == 86038:
+            return BilibiliQrPoll("expired", "The Bilibili QR code has expired.")
+        if state != 0:
+            raise BilibiliProviderError("provider_response_invalid", as_str(data.get("message")) or "Bilibili QR login failed.")
+        refresh_token = as_str(data.get("refresh_token"))
+        if not refresh_token:
+            raise BilibiliProviderError("provider_response_invalid", "Bilibili did not return a refresh token.")
+        # Some deployments now return a cross-domain ticket URL. Following it adds
+        # the real authentication cookies to the same session jar.
+        cross_domain_url = as_str(data.get("url"))
+        if cross_domain_url and not challenge.session.cookies.get("SESSDATA"):
+            try:
+                challenge.session.get(cross_domain_url, headers=_HEADERS, timeout=self.timeout, allow_redirects=True)
+            except requests.RequestException as exc:
+                raise BilibiliProviderError("provider_unavailable", "Bilibili login confirmation is currently unavailable.", 503) from exc
+        if not challenge.session.cookies.get("SESSDATA") or not challenge.session.cookies.get("bili_jct"):
+            raise BilibiliProviderError("provider_response_invalid", "Bilibili QR login completed without usable cookies.")
+        return BilibiliQrPoll("completed", "Bilibili login completed.", challenge.session.cookies, refresh_token)
+
+    def cookie_refresh_required(self, cookie_file: Path) -> tuple[bool, int]:
+        jar = _load_cookie_jar(cookie_file)
+        try:
+            response = requests.get(
+                f"{_PASSPORT_API}/x/passport-login/web/cookie/info",
+                params={"csrf": jar.get("bili_jct", "")},
+                cookies=jar,
+                headers=_HEADERS,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise BilibiliProviderError("provider_unavailable", "Bilibili is currently unavailable.", 503) from exc
+        payload = self._response_payload(response)
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        timestamp = as_int(data.get("timestamp")) or int(time.time() * 1000)
+        return bool(data.get("refresh")), timestamp
+
+    def refresh_cookies(self, cookie_file: Path, refresh_token: str, timestamp: int) -> BilibiliRefreshResult:
+        try:
+            return self._refresh_cookies(cookie_file, refresh_token, timestamp)
+        except requests.RequestException as exc:
+            raise BilibiliProviderError("provider_unavailable", "Bilibili is currently unavailable.", 503) from exc
+
+    def _refresh_cookies(self, cookie_file: Path, refresh_token: str, timestamp: int) -> BilibiliRefreshResult:
+        old_jar = _load_cookie_jar(cookie_file)
+        csrf = old_jar.get("bili_jct")
+        if not csrf:
+            raise BilibiliProviderError("account_login_invalid", "The Bilibili cookie has no CSRF token.", 424)
+        public_key = serialization.load_pem_public_key(_REFRESH_PUBLIC_KEY)
+        encrypted = public_key.encrypt(
+            f"refresh_{timestamp}".encode(),
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+        )
+        correspond_path = binascii.hexlify(encrypted).decode()
+        correspond = requests.get(
+            f"https://www.bilibili.com/correspond/1/{correspond_path}",
+            cookies=old_jar,
+            headers=_HEADERS,
+            timeout=self.timeout,
+        )
+        match = re.search(r'id=["\']1-name["\'][^>]*>([^<]+)', correspond.text)
+        if not match:
+            raise BilibiliProviderError("provider_response_invalid", "Bilibili did not return a cookie refresh challenge.")
+        session = requests.Session()
+        session.cookies.update(old_jar)
+        response = session.post(
+            f"{_PASSPORT_API}/x/passport-login/web/cookie/refresh",
+            data={"csrf": csrf, "refresh_csrf": match.group(1).strip(), "source": "main_web", "refresh_token": refresh_token},
+            headers=_HEADERS,
+            timeout=self.timeout,
+        )
+        payload = self._response_payload(response)
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        new_token = as_str(data.get("refresh_token"))
+        new_csrf = session.cookies.get("bili_jct")
+        if not new_token or not session.cookies.get("SESSDATA") or not new_csrf:
+            raise BilibiliProviderError("provider_response_invalid", "Bilibili returned incomplete refreshed credentials.")
+        return BilibiliRefreshResult(session.cookies, new_token, refresh_token)
+
+    def confirm_cookie_refresh(self, cookie_file: Path, old_refresh_token: str) -> None:
+        jar = _load_cookie_jar(cookie_file)
+        csrf = jar.get("bili_jct")
+        if not csrf:
+            raise BilibiliProviderError("provider_response_invalid", "The refreshed Bilibili cookie has no CSRF token.")
+        try:
+            confirm = requests.post(
+                f"{_PASSPORT_API}/x/passport-login/web/confirm/refresh",
+                data={"csrf": csrf, "refresh_token": old_refresh_token},
+                cookies=jar,
+                headers=_HEADERS,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise BilibiliProviderError("provider_unavailable", "Bilibili is currently unavailable.", 503) from exc
+        self._response_payload(confirm)
+
+    @staticmethod
+    def _response_payload(response: Any) -> dict[str, Any]:
+        if response.status_code >= 500:
+            raise BilibiliProviderError("provider_unavailable", "Bilibili is currently unavailable.", 503)
+        payload = _json_response(response)
+        if not isinstance(payload, dict):
+            raise BilibiliProviderError("provider_response_invalid", "Bilibili returned an invalid response.")
+        code = as_int(payload.get("code")) or 0
+        if code == -101:
+            raise BilibiliProviderError("account_login_invalid", "The Bilibili login is no longer valid.", 424)
+        if code != 0:
+            raise BilibiliProviderError("provider_response_invalid", as_str(payload.get("message")) or f"Bilibili error {code}.")
+        return payload
 
     def _get(self, cookie_file: Path, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
@@ -146,8 +328,8 @@ class BilibiliProvider:
             data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
             info = data.get("info") if isinstance(data.get("info"), dict) else {}
             medias = as_dict_list(data.get("medias"))
-            total = as_int(info.get("media_count")) or offset + len(medias)
-            resource = self._favorite_resource(account, {**info, "id": external_id}, kind)
+            total = as_int(info.get("media_count")) or as_int(data.get("total")) or offset + len(medias)
+            resource = self._favorite_resource(account, {**info, "id": external_id, "media_count": total}, kind)
             entries = [self._favorite_entry(item, offset + index + 1) for index, item in enumerate(medias)]
         elif kind in {"collection", "series"}:
             if kind == "collection":
@@ -161,8 +343,8 @@ class BilibiliProvider:
             medias = as_dict_list(data.get("archives"))
             page = data.get("page") if isinstance(data.get("page"), dict) else {}
             total = as_int(page.get("total")) or offset + len(medias)
-            meta = data.get("meta") if isinstance(data.get("meta"), dict) else {"season_id" if kind == "collection" else "series_id": external_id, "total": total}
-            resource = self._collection_resource(account, {"meta": meta}, kind)
+            meta = data.get("meta") if isinstance(data.get("meta"), dict) else {"season_id" if kind == "collection" else "series_id": external_id}
+            resource = self._collection_resource(account, {"meta": {**meta, "total": total}}, kind)
             entries = [self._entry(item, offset + index + 1) for index, item in enumerate(medias)]
         elif kind == "watch_later":
             payload = self._get(cookie_file, "/x/v2/history/toview/web", params={"jsonp": "jsonp"})

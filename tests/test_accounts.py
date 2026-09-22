@@ -5,13 +5,14 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+import requests
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 
 from ytsage.server.api.accounts import _fetch_avatar
-from ytsage.server.models import AccountCreateRequest, AccountResource, AccountUpdateRequest, CreateTaskRequest, PlatformAccount, PlaylistEntry, PlaylistMonitorCreate
-from ytsage.server.providers.bilibili import BilibiliIdentity, BilibiliProvider, BilibiliProviderError
+from ytsage.server.models import AccountCreateRequest, AccountResource, AccountUpdateRequest, BilibiliQrStartRequest, CreateTaskRequest, PlatformAccount, PlaylistEntry, PlaylistMonitorCreate
+from ytsage.server.providers.bilibili import BilibiliIdentity, BilibiliProvider, BilibiliProviderError, BilibiliQrPoll, BilibiliQrSession
 from ytsage.server.services.accounts import AccountConflictError, AccountService
 from ytsage.server.services.analyzer import _playlist_entry
 from ytsage.server.services.storage import Storage
@@ -37,8 +38,9 @@ class FakeIdentityProvider:
 
 
 class FakeResponse:
-    def __init__(self, payload: dict, status_code: int = 200, headers: dict | None = None) -> None:
+    def __init__(self, payload: dict, status_code: int = 200, headers: dict | None = None, text: str | None = None) -> None:
         self.content = json.dumps(payload).encode()
+        self.text = text if text is not None else self.content.decode()
         self.status_code = status_code
         self.headers = headers or {"Content-Type": "application/json"}
 
@@ -56,6 +58,10 @@ class FakeHttp:
         self.calls.append((url, kwargs))
         return FakeResponse(self.payloads.pop(0))
 
+    def post(self, url: str, **kwargs):
+        self.calls.append((url, kwargs))
+        return FakeResponse(self.payloads.pop(0))
+
 
 def test_storage_migrates_existing_monitor_schema(tmp_path: Path):
     database = tmp_path / "legacy.db"
@@ -68,7 +74,125 @@ def test_storage_migrates_existing_monitor_schema(tmp_path: Path):
     columns = {row[1] for row in storage._conn.execute("PRAGMA table_info(playlist_monitors)").fetchall()}
 
     assert "account_id" in columns
+    account_columns = {row[1] for row in storage._conn.execute("PRAGMA table_info(platform_accounts)").fetchall()}
+    assert {"login_method", "auto_refresh", "last_refresh_check_at", "last_refresh_at"} <= account_columns
     assert storage.list_accounts() == []
+
+
+def test_bilibili_qr_poll_maps_pending_and_scanned_states():
+    session = Mock()
+    session.get.side_effect = [
+        FakeResponse({"code": 0, "data": {"code": 86101, "message": "not scanned"}}),
+        FakeResponse({"code": 0, "data": {"code": 86090, "message": "scanned"}}),
+    ]
+    challenge = BilibiliQrSession(session=session, qr_url="https://example.test/qr", qrcode_key="key", expires_at=9999999999)
+    provider = BilibiliProvider()
+
+    assert provider.poll_qr_login(challenge).status == "pending"
+    assert provider.poll_qr_login(challenge).status == "scanned"
+
+
+def test_account_refresh_records_check_when_renewal_is_not_required(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    provider = FakeIdentityProvider()
+    service = AccountService(tmp_path, storage, provider)  # type: ignore[arg-type]
+    account = service.create(AccountCreateRequest(label="One", cookie_content=COOKIE))
+    token_path = service.resolve_cookie_file(account.id, require_usable=False).parent / "refresh-token.txt"
+    token_path.write_text("refresh-token", encoding="utf-8")
+    storage.update_account(account.id, auto_refresh=True, login_method="qr")
+    provider.cookie_refresh_required = Mock(return_value=(False, 123))
+    provider.refresh_cookies = Mock()
+
+    refreshed = service.refresh(account.id)
+
+    assert refreshed.last_refresh_check_at is not None
+    assert refreshed.last_refresh_at is None
+    provider.refresh_cookies.assert_not_called()
+
+
+def test_qr_login_persists_refresh_token_without_exposing_it(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    provider = FakeIdentityProvider()
+    session = Mock()
+    challenge = BilibiliQrSession(session=session, qr_url="https://example.test/qr", qrcode_key="key", expires_at=9999999999)
+    provider.start_qr_login = Mock(return_value=challenge)
+    cookie_jar = requests.cookies.RequestsCookieJar()
+    cookie_jar.set("SESSDATA", "session", domain=".bilibili.com", path="/")
+    cookie_jar.set("bili_jct", "csrf", domain=".bilibili.com", path="/")
+    provider.poll_qr_login = Mock(return_value=BilibiliQrPoll("completed", "done", cookie_jar, "secret-refresh-token"))
+    service = AccountService(tmp_path, storage, provider)  # type: ignore[arg-type]
+
+    started = service.start_qr_login(BilibiliQrStartRequest(label="QR account"))
+    completed = service.poll_qr_login(started.challenge_id)
+
+    assert completed.status == "completed"
+    assert completed.account is not None
+    assert completed.account.login_method == "qr"
+    assert completed.account.auto_refresh is True
+    payload = completed.model_dump()
+    assert "secret-refresh-token" not in json.dumps(payload)
+    token_path = service.resolve_cookie_file(completed.account.id, require_usable=False).parent / "refresh-token.txt"
+    assert token_path.read_text(encoding="utf-8") == "secret-refresh-token"
+
+
+def test_qr_relogin_replaces_credentials_without_changing_account_id(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    provider = FakeIdentityProvider()
+    service = AccountService(tmp_path, storage, provider)  # type: ignore[arg-type]
+    original = service.create(AccountCreateRequest(label="Existing", cookie_content=COOKIE, make_default=True))
+    storage.update_account(original.id, state="invalid", last_error="expired")
+    challenge = BilibiliQrSession(session=Mock(), qr_url="https://example.test/qr", qrcode_key="key", expires_at=9999999999)
+    provider.start_qr_login = Mock(return_value=challenge)
+    cookie_jar = requests.cookies.RequestsCookieJar()
+    cookie_jar.set("SESSDATA", "renewed-session", domain=".bilibili.com", path="/")
+    cookie_jar.set("bili_jct", "renewed-csrf", domain=".bilibili.com", path="/")
+    provider.poll_qr_login = Mock(return_value=BilibiliQrPoll("completed", "done", cookie_jar, "renewed-token"))
+
+    started = service.start_qr_login(BilibiliQrStartRequest(label=original.label, account_id=original.id))
+    completed = service.poll_qr_login(started.challenge_id)
+
+    assert completed.account is not None
+    assert completed.account.id == original.id
+    assert completed.account.is_default is True
+    assert completed.account.state == "valid"
+    assert completed.account.login_method == "qr"
+    assert completed.account.auto_refresh is True
+    assert storage.list_accounts()[0].id == original.id
+    credential_dir = service.resolve_cookie_file(original.id, require_usable=False).parent
+    assert (credential_dir / "refresh-token.txt").read_text(encoding="utf-8") == "renewed-token"
+
+
+def test_qr_relogin_rejects_a_different_bilibili_identity(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    provider = FakeIdentityProvider()
+    service = AccountService(tmp_path, storage, provider)  # type: ignore[arg-type]
+    original = service.create(AccountCreateRequest(label="Existing", cookie_content=COOKIE))
+    original_cookie = service.resolve_cookie_file(original.id, require_usable=False).read_text(encoding="utf-8")
+    challenge = BilibiliQrSession(session=Mock(), qr_url="https://example.test/qr", qrcode_key="key", expires_at=9999999999)
+    provider.start_qr_login = Mock(return_value=challenge)
+    cookie_jar = requests.cookies.RequestsCookieJar()
+    cookie_jar.set("SESSDATA", "other-session", domain=".bilibili.com", path="/")
+    cookie_jar.set("bili_jct", "other-csrf", domain=".bilibili.com", path="/")
+    provider.poll_qr_login = Mock(return_value=BilibiliQrPoll("completed", "done", cookie_jar, "other-token"))
+    provider.next_id = "different-user"
+
+    started = service.start_qr_login(BilibiliQrStartRequest(label=original.label, account_id=original.id))
+    with pytest.raises(AccountConflictError, match="does not match"):
+        service.poll_qr_login(started.challenge_id)
+
+    assert service.resolve_cookie_file(original.id, require_usable=False).read_text(encoding="utf-8") == original_cookie
+    assert not (service.resolve_cookie_file(original.id, require_usable=False).parent / "refresh-token.txt").exists()
+
+
+def test_imported_cookie_account_does_not_enable_auto_refresh_without_token(tmp_path: Path):
+    service = AccountService(tmp_path, Storage(tmp_path / "server.db"), FakeIdentityProvider())  # type: ignore[arg-type]
+
+    account = service.create(AccountCreateRequest(label="Cookie account", cookie_content=COOKIE))
+
+    assert account.login_method == "cookie"
+    assert account.auto_refresh is False
+    with pytest.raises(AccountConflictError, match="no refresh token"):
+        service.refresh(account.id)
 
 
 def test_account_service_stores_isolated_credentials_and_default(tmp_path: Path):
@@ -219,6 +343,42 @@ def test_bilibili_provider_paginates_favorite_entries(tmp_path: Path):
     assert page.entries[0].index == 21
     assert page.entries[0].url == "https://www.bilibili.com/video/BV123"
     assert http.calls[0][1]["params"]["pn"] == 2
+
+
+def test_bilibili_provider_uses_favorite_detail_total_when_info_count_is_missing(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(COOKIE, encoding="utf-8")
+    http = FakeHttp([{"code": 0, "data": {"total": 41, "info": {"id": 11, "title": "Favorite"}, "medias": [
+        {"id": 9, "bvid": "BV123", "title": "Video"},
+    ]}}])
+    provider = BilibiliProvider(http=http)
+    account = Storage(tmp_path / "server.db").create_account("account", "bilibili", "A", "accounts/account/cookies.txt")
+    account = account.model_copy(update={"external_id": "1001"})
+
+    page = provider.list_entries(account, cookie, "created_favorite:11", 0, 20)
+
+    assert page.page.total == 41
+    assert page.page.has_more is True
+    assert page.resource.item_count == 41
+
+
+def test_account_service_preserves_known_resource_total(tmp_path: Path):
+    storage = Storage(tmp_path / "server.db")
+    provider = FakeIdentityProvider()
+    service = AccountService(tmp_path, storage, provider)  # type: ignore[arg-type]
+    account = service.create(AccountCreateRequest(label="One", cookie_content=COOKIE))
+    provider.list_entries = Mock(return_value=BilibiliProvider(http=FakeHttp([{
+        "code": 0,
+        "data": {"info": {"id": 11, "title": "Favorite"}, "medias": [
+            {"id": 9, "bvid": "BV123", "title": "Video"},
+        ]},
+    }])).list_entries(account, service.resolve_cookie_file(account.id), "created_favorite:11", 0, 20))
+
+    page = service.list_entries(account.id, "created_favorite:11", 0, 20, known_total=41)
+
+    assert page.page.total == 41
+    assert page.page.has_more is True
+    assert page.resource.item_count == 41
 
 
 def test_bilibili_provider_classifies_mixed_favorite_entries(tmp_path: Path):

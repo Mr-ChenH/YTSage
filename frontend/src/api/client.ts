@@ -3,6 +3,8 @@ import type {
   AccountResourceEntriesResponse,
   AccountResourceListResponse,
   AccountUpdateRequest,
+  BilibiliQrPollResponse,
+  BilibiliQrStartResponse,
   AnalyzeResponse,
   CookieSaveResponse,
   CreateTaskRequest,
@@ -101,6 +103,11 @@ export function createApiClient({ token }: ApiClientOptions) {
       return `/api/accounts/${encodeURIComponent(accountId)}/image?${params}`;
     },
     createAccount: (request: AccountCreateRequest) => fetch('/api/accounts', { method: 'POST', headers: headers(token, true), body: JSON.stringify(request) }).then(parseResponse<PlatformAccount>),
+    startBilibiliQr: (label: string, makeDefault = false, accountId?: string | null) => fetch('/api/accounts/bilibili/qr', {
+      method: 'POST', headers: headers(token, true), body: JSON.stringify({ label, make_default: makeDefault, account_id: accountId || null }),
+    }).then(parseResponse<BilibiliQrStartResponse>),
+    pollBilibiliQr: (challengeId: string) => fetch(`/api/accounts/bilibili/qr/${encodeURIComponent(challengeId)}`, { headers: headers(token) }).then(parseResponse<BilibiliQrPollResponse>),
+    refreshAccount: (accountId: string, force = false) => fetch(`/api/accounts/${accountId}/refresh?force=${force}`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlatformAccount>),
     updateAccount: (accountId: string, request: AccountUpdateRequest) => fetch(`/api/accounts/${accountId}`, { method: 'PATCH', headers: headers(token, true), body: JSON.stringify(request) }).then(parseResponse<PlatformAccount>),
     verifyAccount: (accountId: string) => fetch(`/api/accounts/${accountId}/verify`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlatformAccount>),
     setDefaultAccount: (accountId: string) => fetch(`/api/accounts/${accountId}/default`, { method: 'POST', headers: headers(token) }).then(parseResponse<PlatformAccount>),
@@ -115,8 +122,9 @@ export function createApiClient({ token }: ApiClientOptions) {
       pendingAccountResourceRequests.set(key, request);
       return request;
     },
-    accountResourceEntries: (accountId: string, resourceId: string, offset = 0, limit = 20) => {
+    accountResourceEntries: (accountId: string, resourceId: string, offset = 0, limit = 20, knownTotal?: number | null) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+      if (knownTotal != null && knownTotal >= 0) params.set('known_total', String(knownTotal));
       const url = `/api/accounts/${accountId}/resources/${encodeURIComponent(resourceId)}/entries?${params}`;
       const key = `${token}\n${url}`;
       const pending = pendingAccountResourceRequests.get(key) as Promise<AccountResourceEntriesResponse> | undefined;

@@ -30,7 +30,7 @@ export function AnalysisSummary({ analysis, t }: { analysis: AnalyzeResponse | n
   const originalUrl = rawText(analysis, 'original_url');
   const sourceUrl = webpageUrl || originalUrl;
   const extractor = rawText(analysis, 'extractor') || rawText(analysis, 'extractor_key');
-  const thumbnailUrl = analysis.thumbnail_url && !thumbnailFailed ? analysis.thumbnail_url : '/static/assets/main.png';
+  const thumbnailUrl = analysis.thumbnail_url && !thumbnailFailed ? analysis.thumbnail_url : `${import.meta.env.BASE_URL}assets/main.png`;
   return <section className="media-summary">
     <div className="media-preview"><img key={thumbnailUrl} src={thumbnailUrl} alt="" referrerPolicy="no-referrer" onError={() => setThumbnailFailed(true)} /></div>
     <div className="media-summary-copy">
