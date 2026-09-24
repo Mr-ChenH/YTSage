@@ -8,12 +8,12 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import Annotated
 
 import uvicorn
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from uvicorn.server import HANDLED_SIGNALS
 
-from .api.accounts import create_accounts_router
+from .api.accounts import _fetch_platform_image, create_accounts_router
 from .api.analysis import create_analysis_router
 from .api.files import create_files_router
 from .api.monitors import create_monitors_router
@@ -21,6 +21,7 @@ from .api.system import create_system_router
 from .api.tasks import create_tasks_router
 from .config import load_config
 from .services import analyzer
+from .providers.base import ProviderError
 from .services.accounts import AccountService
 from .services.auth import require_auth
 from .services.dependencies import ensure_runtime_dependencies
@@ -75,6 +76,14 @@ def create_app() -> FastAPI:
     app.include_router(create_tasks_router(config, storage, manager, auth_dependency))
     app.include_router(create_monitors_router(monitor_service, auth_dependency))
     app.include_router(create_files_router(config, auth_dependency))
+
+    @app.get("/api/media/douyin-thumbnail/{token}", response_model=None, include_in_schema=False)
+    def douyin_thumbnail(token: str):
+        try:
+            image_url = account_service.resolve_douyin_thumbnail(token)
+        except ProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        return _fetch_platform_image("douyin", image_url)
 
     if config.static_dir.exists():
         app.mount("/static", StaticFiles(directory=config.static_dir), name="static")

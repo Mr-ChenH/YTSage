@@ -11,7 +11,7 @@ TaskStatus = Literal["queued", "running", "completed", "failed", "cancelled", "i
 MediaType = Literal["video", "audio", "subtitle", "other"]
 DownloadMode = Literal["video", "audio", "subtitles"]
 TaskOrigin = Literal["manual", "monitor_initial", "monitor_update"]
-PlaylistEntryType = Literal["video", "multipart_video", "favorite_collection", "audio"]
+PlaylistEntryType = Literal["video", "multipart_video", "favorite_collection", "audio", "image_album"]
 PlaylistEntryGroupType = Literal["favorite_collection", "multipart_video"]
 
 

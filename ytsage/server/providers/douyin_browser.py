@@ -31,6 +31,7 @@ _RESPONSE_FAMILIES = {
     "douyin_favorites": ("/aweme/v1/web/aweme/listcollection/",),
     "douyin_collections": ("/aweme/v1/web/collects/list/",),
     "douyin_collection": ("/aweme/v1/web/collects/video/list/",),
+    "douyin_video": ("/aweme/v1/web/aweme/detail/",),
 }
 _MAX_SCROLLS = 40
 _PROFILE_URL = "https://www.douyin.com/user/self"
@@ -40,6 +41,7 @@ _PAGE_URLS = {
     "douyin_collections": _PROFILE_URL,
 }
 _IMAGE_SUFFIXES = (".douyinpic.com", ".douyincdn.com", ".byteimg.com", ".pstatp.com", ".douyinstatic.com")
+_MEDIA_SUFFIXES = (".douyinvod.com", ".douyinstatic.com", ".douyincdn.com", ".byteimg.com", ".pstatp.com")
 _COLLECTION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _RISK_CODES = {461, 471, 2156, 4031}
 _RISK_MARKERS = (
@@ -52,6 +54,8 @@ _CAPABILITY_LOCK = threading.Lock()
 _CAPABILITY_CACHE: dict[str, Any] | None = None
 _RESOURCE_CACHE_FRESH_SECONDS = 300.0
 _RESOURCE_CACHE_MAX_ENTRIES = 128
+_IMAGE_TOKEN_TTL_SECONDS = 600.0
+_IMAGE_TOKEN_MAX_ENTRIES = 256
 
 
 def _text(value: Any) -> str | None:
@@ -69,6 +73,14 @@ def _integer(value: Any) -> int | None:
 
 
 def _image(value: Any) -> str | None:
+    return _image_url(value, keep_query=False)
+
+
+def _signed_image(value: Any) -> str | None:
+    return _image_url(value, keep_query=True)
+
+
+def _image_url(value: Any, *, keep_query: bool) -> str | None:
     values = value.get("url_list") if isinstance(value, dict) else [value]
     for candidate in values if isinstance(values, list) else []:
         if not isinstance(candidate, str):
@@ -81,7 +93,7 @@ def _image(value: Any) -> str | None:
         except ValueError:
             continue
         if parsed.scheme == "https" and parsed.username is None and parsed.password is None and port in {None, 443} and any(host.endswith(s) for s in _IMAGE_SUFFIXES):
-            return parsed._replace(query="", fragment="").geturl()
+            return parsed._replace(query=parsed.query if keep_query else "", fragment="").geturl()
     return None
 
 
@@ -209,7 +221,7 @@ def _capture_page(
         truncated = False
         for scroll_index in range(_MAX_SCROLLS + 1):
             raise_response_error()
-            records = _collections(payloads) if payload_kind == "collections" else _awemes(payloads)
+            records = _payload_records(payloads, payload_kind)
             has_more = any(bool(payload.get("has_more")) for payload in payloads[-2:])
             if len(records) >= target_count:
                 truncated = has_more
@@ -271,7 +283,7 @@ class _AccountBrowserWorker:
             key = (resource_kind, page_url, payload_kind)
             previous = None if force_refresh else self.history.get(key)
             if previous is not None:
-                records = _collections(previous.payloads) if payload_kind == "collections" else _awemes(previous.payloads)
+                records = _payload_records(previous.payloads, payload_kind)
                 has_more = any(bool(payload.get("has_more")) for payload in previous.payloads[-2:])
                 if len(records) >= target_count or not has_more:
                     return BrowserCapture(previous.payloads, has_more and len(records) >= target_count)
@@ -504,7 +516,7 @@ def _navigate_library(page: Any, resource_kind: str, *, refresh_works: bool = Fa
         if refresh_works and not _click_visible_text(page, "\u4f5c\u54c1", attempts=25):
             raise ProviderError("provider_response_invalid", "Douyin works navigation is unavailable.", 502)
         return
-    if resource_kind == "douyin_collection":
+    if resource_kind in {"douyin_collection", "douyin_video"}:
         return
     if resource_kind not in {"douyin_favorites", "douyin_collections"}:
         raise ProviderError("resource_not_found", "Unsupported Douyin library type.", 404)
@@ -552,6 +564,7 @@ class DouyinResourceClient:
         self.driver = driver or PlaywrightDouyinDriver()
         self.secret = secret or secrets.token_bytes(32)
         self._cache: dict[tuple[Any, ...], tuple[float, Any]] = {}
+        self._images: dict[str, tuple[float, str]] = {}
         self._cache_lock = threading.Lock()
         self._refreshing: set[tuple[Any, ...]] = set()
         self._refresh_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="douyin-refresh")
@@ -563,6 +576,7 @@ class DouyinResourceClient:
         self._refresh_executor.shutdown(wait=True)
         with self._cache_lock:
             self._cache.clear()
+            self._images.clear()
             self._refreshing.clear()
         close = getattr(self.driver, "close", None)
         if close:
@@ -639,6 +653,69 @@ class DouyinResourceClient:
         result = AccountResourceEntriesResponse(resource=resource, entries=entries, page=PageInfo(offset=offset, limit=limit, total=total, has_more=offset + len(entries) < total))
         self._cache_put(cache_key, result)
         return result
+
+    def video_info(self, cookie_file: Path, canonical_url: str) -> dict[str, Any]:
+        capture = self._observe_with_retry(
+            cookie_file,
+            canonical_url,
+            _RESPONSE_FAMILIES["douyin_video"],
+            target_count=1,
+            payload_kind="detail",
+            resource_kind="douyin_video",
+            force_refresh=True,
+        )
+        expected_id = urlparse(canonical_url).path.rstrip("/").rsplit("/", 1)[-1]
+        item = next((
+            payload.get("aweme_detail")
+            for payload in reversed(capture.payloads)
+            if isinstance(payload.get("aweme_detail"), dict)
+            and _text(payload["aweme_detail"].get("aweme_id")) == expected_id
+        ), None)
+        if not isinstance(item, dict):
+            raise ProviderError("provider_response_invalid", "Douyin returned invalid video data.", 502)
+        formats = _video_formats(item, canonical_url)
+        if not formats:
+            raise ProviderError("provider_response_invalid", "This Douyin video has no downloadable media.", 422)
+        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+        video = item.get("video") if isinstance(item.get("video"), dict) else {}
+        thumbnail_url = self._issue_image(_video_image(video, signed=True))
+        return {
+            "id": expected_id,
+            "title": _text(item.get("desc")) or "Douyin video",
+            "webpage_url": canonical_url,
+            "extractor": "DouyinBrowser",
+            "channel": _text(author.get("nickname")),
+            "duration": (_integer(video.get("duration")) or 0) / 1000 or None,
+            "thumbnail": thumbnail_url,
+            "formats": formats,
+        }
+
+    def resolve_image(self, token: str) -> str:
+        now = time.monotonic()
+        with self._cache_lock:
+            self._purge_images(now)
+            item = self._images.get(token)
+            if item is None:
+                raise ProviderError("resource_not_found", "Douyin thumbnail not found or expired.", 404)
+            return item[1]
+
+    def _issue_image(self, image_url: str | None) -> str | None:
+        if image_url is None:
+            return None
+        token = secrets.token_urlsafe(24)
+        now = time.monotonic()
+        with self._cache_lock:
+            self._purge_images(now)
+            if len(self._images) >= _IMAGE_TOKEN_MAX_ENTRIES:
+                oldest = min(self._images, key=lambda key: self._images[key][0])
+                self._images.pop(oldest, None)
+            self._images[token] = (now + _IMAGE_TOKEN_TTL_SECONDS, image_url)
+        return f"/api/media/douyin-thumbnail/{token}"
+
+    def _purge_images(self, now: float) -> None:
+        expired = [token for token, (expires_at, _) in self._images.items() if expires_at <= now]
+        for token in expired:
+            self._images.pop(token, None)
 
     def warm(self, account: PlatformAccount, cookie_file: Path, *, limit: int = 10) -> None:
         for kind in ("douyin_works", "douyin_favorites"):
@@ -751,6 +828,14 @@ def _awemes(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _payload_records(payloads: list[dict[str, Any]], payload_kind: str) -> list[dict[str, Any]]:
+    if payload_kind == "collections":
+        return _collections(payloads)
+    if payload_kind == "detail":
+        return [payload["aweme_detail"] for payload in payloads if isinstance(payload.get("aweme_detail"), dict)]
+    return _awemes(payloads)
+
+
 def _collections(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -779,16 +864,127 @@ def _flag(value: Any) -> bool:
     return bool(value)
 
 
+def _safe_media_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    url = f"https:{value}" if value.startswith("//") else value
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or not any(host.endswith(suffix) for suffix in _MEDIA_SUFFIXES)
+    ):
+        return None
+    return url
+
+
+def _address_url(value: Any) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    urls = value.get("url_list")
+    if not isinstance(urls, list):
+        return None
+    return next((safe for candidate in urls if (safe := _safe_media_url(candidate))), None)
+
+
+def _audio_only_video(video: dict[str, Any]) -> bool:
+    addresses = [video.get(key) for key in ("play_addr", "play_addr_h264", "play_addr_265", "play_addr_bytevc1")]
+    media_urls = [url for address in addresses if (url := _address_url(address))]
+    if any(urlparse(url).path.lower().endswith(".mp3") or "-music-" in (urlparse(url).hostname or "") for url in media_urls):
+        return True
+    has_video_markers = bool(video.get("bit_rate") or video.get("format") or video.get("play_addr_h264") or video.get("play_addr_265") or video.get("play_addr_bytevc1"))
+    return bool(media_urls) and not has_video_markers
+
+
+def _video_formats(item: dict[str, Any], canonical_url: str) -> list[dict[str, Any]]:
+    video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    if not video or _audio_only_video(video):
+        return []
+    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    bit_rates = video.get("bit_rate")
+    if isinstance(bit_rates, list):
+        for bitrate in bit_rates:
+            if isinstance(bitrate, dict) and isinstance(bitrate.get("play_addr"), dict):
+                candidates.append((bitrate["play_addr"], bitrate))
+    if not candidates:
+        for key, codec in (("play_addr_h264", "h264"), ("play_addr_265", "h265"), ("play_addr_bytevc1", "h265"), ("play_addr", "h264")):
+            address = video.get(key)
+            if isinstance(address, dict):
+                candidates.append((address, {"codec": codec}))
+
+    formats: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for address, metadata in candidates:
+        media_url = _address_url(address)
+        if not media_url or media_url in seen:
+            continue
+        seen.add(media_url)
+        width = _integer(address.get("width")) or _integer(video.get("width"))
+        height = _integer(address.get("height")) or _integer(video.get("height"))
+        codec = _text(metadata.get("codec")) or ("h265" if _flag(metadata.get("is_bytevc1")) or _flag(metadata.get("is_h265")) else "h264")
+        formats.append({
+            "format_id": f"browser-{len(formats) + 1}-{height or 0}p-{codec}",
+            "url": media_url,
+            "ext": "mp4",
+            "width": width,
+            "height": height,
+            "vcodec": codec,
+            "acodec": "aac",
+            "fps": _integer(metadata.get("FPS") or metadata.get("fps")),
+            "filesize": _integer(address.get("data_size")),
+            "tbr": (_integer(metadata.get("bit_rate")) or 0) / 1000 or None,
+            "http_headers": {"Referer": canonical_url},
+        })
+    return formats
+
+
+def _video_image(video: dict[str, Any], *, signed: bool = False) -> str | None:
+    normalize = _signed_image if signed else _image
+    for key in ("cover", "origin_cover", "dynamic_cover", "animated_cover"):
+        url = normalize(video.get(key))
+        if url:
+            return url
+    return None
+
+
 def _entry(item: dict[str, Any], index: int) -> PlaylistEntry:
     aweme_id = _text(item.get("aweme_id") or item.get("id"))
     video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    images = item.get("images") if isinstance(item.get("images"), list) else []
     url = canonicalize_douyin_video_url(f"https://www.douyin.com/video/{aweme_id}") if aweme_id else None
     status = item.get("status") if isinstance(item.get("status"), dict) else {}
-    image_only = _integer(item.get("aweme_type")) not in {None, 0, 4} or not video
+    image_album = bool(images) and (not video or _audio_only_video(video))
+    missing_video = not video or _audio_only_video(video)
     private = _flag(status.get("private_status")) or _flag(status.get("is_private")) or _flag(item.get("private_status")) or _flag(item.get("is_private"))
     restricted = _flag(status.get("is_prohibited")) or _flag(item.get("is_prohibited")) or _flag(status.get("in_reviewing")) or _flag(item.get("in_reviewing"))
     sharing_blocked = status.get("allow_share") is False or status.get("allow_share") == 0 or item.get("allow_share") is False or item.get("allow_share") == 0
-    unavailable = bool(_flag(item.get("is_delete")) or _flag(status.get("is_delete")) or private or restricted or sharing_blocked or image_only or not url)
-    reason = "This Douyin item is deleted, private, image-only, or otherwise unavailable." if unavailable else None
+    blocked = bool(_flag(item.get("is_delete")) or _flag(status.get("is_delete")) or private or restricted or sharing_blocked or not url)
+    unavailable = blocked or missing_video
+    if image_album and not blocked:
+        reason = "This Douyin item is an image post with background audio, not a video."
+    elif unavailable:
+        reason = "This Douyin item is deleted, private, or otherwise unavailable."
+    else:
+        reason = None
     author = item.get("author") if isinstance(item.get("author"), dict) else {}
-    return PlaylistEntry(index=index, id=aweme_id, title=_text(item.get("desc")) or "Untitled video", url=None if unavailable else url, webpage_url=None if unavailable else url, duration=(_integer(video.get("duration")) or 0) / 1000 or None, channel=_text(author.get("nickname")), thumbnail_url=_image(video.get("cover") or video.get("origin_cover")), is_available=not unavailable, unavailable_reason=reason)
+    image_thumbnail = _image(images[0]) if image_album and isinstance(images[0], dict) else None
+    return PlaylistEntry(
+        index=index,
+        id=aweme_id,
+        title=_text(item.get("desc")) or "Untitled video",
+        url=None if unavailable else url,
+        webpage_url=url if (not blocked and (image_album or not unavailable)) else None,
+        duration=(_integer(video.get("duration")) or 0) / 1000 or None,
+        channel=_text(author.get("nickname")),
+        thumbnail_url=_video_image(video) or image_thumbnail,
+        entry_type="image_album" if image_album and not blocked else "video",
+        is_available=not unavailable,
+        unavailable_reason=reason,
+    )

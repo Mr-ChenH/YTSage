@@ -14,7 +14,7 @@ from ..downloads.process import decode_output_line, terminate_process
 from ..models import CreateTaskRequest, HistoryEntry, PlaylistEntry, TaskEvent, TaskProgress, TaskResponse
 from ..providers.douyin import canonicalize_douyin_video_url
 from .cookies import COOKIE_PROFILES, cookie_file_path, cookie_profile_for_url
-from .douyin_proofs import DouyinDownloadProofStore
+from .douyin_proofs import DouyinDownloadProofStore, DouyinProofError
 from .files import classify_file
 from .storage import Storage, utc_now
 
@@ -50,6 +50,7 @@ class TaskManager:
         self.account_service = account_service
         self.douyin_proofs = douyin_proofs or DouyinDownloadProofStore()
         self.executor = DownloadExecutor(config, storage, self.processes, self._publish, account_service)
+        self._douyin_media_info: dict[str, dict[str, object]] = {}
         self._workers: list[asyncio.Task[Any]] = []
         self._claimed_tasks: set[str] = set()
         self._started = False
@@ -72,12 +73,14 @@ class TaskManager:
             worker.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
+        self._douyin_media_info.clear()
         self._started = False
 
     async def create_task(self, request: CreateTaskRequest) -> TaskResponse:
         request = request.model_copy(deep=True)
         request_platform = cookie_profile_for_url(request.url)
         douyin_canonical_url = None
+        douyin_media_info: dict[str, object] | None = None
         if request_platform == "douyin":
             douyin_canonical_url = canonicalize_douyin_video_url(request.url)
             if douyin_canonical_url is None:
@@ -109,17 +112,28 @@ class TaskManager:
                 if not request.playlist_entries:
                     raise ValueError("The selected Bilibili collection contains no downloadable videos.")
         if douyin_canonical_url is not None:
-            self.douyin_proofs.consume(request.douyin_download_proof, douyin_canonical_url, request.account_id)
+            douyin_media_info = self.douyin_proofs.consume(
+                request.douyin_download_proof,
+                douyin_canonical_url,
+                request.account_id,
+            )
             request.url = douyin_canonical_url
             request.douyin_download_proof = None
         task_id = uuid.uuid4().hex
         task = self.storage.create_task(task_id, request)
+        if douyin_media_info is not None:
+            self._douyin_media_info[task_id] = douyin_media_info
         await self.queue.put(task_id)
         await self._publish("task_created", task)
         return task
 
     async def resume_task(self, task_id: str) -> TaskResponse:
         task = self.storage.get_task(task_id)
+        if cookie_profile_for_url(task.url) == "douyin":
+            raise DouyinProofError(
+                "douyin_analysis_required",
+                "Analyze this Douyin video before creating a download task.",
+            )
         if task.status not in {"failed", "cancelled", "interrupted"}:
             raise ValueError(f"Task in {task.status} state cannot be resumed")
         progress = self._copy_progress(task.progress)
@@ -181,6 +195,7 @@ class TaskManager:
         process = self.processes.get(task_id)
         if process is not None:
             self._terminate_process(process)
+        self._douyin_media_info.pop(task_id, None)
         task = self.storage.update_task(task_id, status="cancelled", finished_at=utc_now())
         await self._publish("task_cancelled", task)
         return task
@@ -193,6 +208,7 @@ class TaskManager:
         process = self.processes.get(task_id)
         if process is not None:
             self._terminate_process(process)
+        self._douyin_media_info.pop(task_id, None)
         self.storage.delete_task(task_id)
         await self._publish("task_deleted", task)
 
@@ -230,9 +246,20 @@ class TaskManager:
                     await self._retry_playlist_item(task, retry_index)
             finally:
                 self._claimed_tasks.discard(task_id)
+                if retry_index is None:
+                    self._douyin_media_info.pop(task_id, None)
                 self.queue.task_done()
 
     async def _run_task(self, task: TaskResponse) -> None:
+        if cookie_profile_for_url(task.url) == "douyin" and task.id not in self._douyin_media_info:
+            failed = self.storage.update_task(
+                task.id,
+                status="failed",
+                error="Analyze this Douyin video again before downloading it.",
+                finished_at=utc_now(),
+            )
+            await self._publish("task_failed", failed)
+            return
         request = CreateTaskRequest(**task.options)
         progress = task.progress
         entries = self._playlist_entries(task)
@@ -449,6 +476,15 @@ class TaskManager:
         *,
         use_cookies: bool = True,
     ) -> tuple[list[str], int, str | None, TaskProgress]:
+        media_info = self._douyin_media_info.get(task.id)
+        if media_info is not None:
+            return await self.executor.execute(
+                task,
+                request,
+                progress,
+                use_cookies=use_cookies,
+                media_info=media_info,
+            )
         return await self.executor.execute(task, request, progress, use_cookies=use_cookies)
 
     def _parse_queue_item(self, queue_item: str) -> tuple[str, int | None]:

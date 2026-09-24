@@ -793,8 +793,8 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .douyin-entry-row strong { font-size: 12px; }
 .douyin-entry-row small { color: var(--muted); font-size: 10px; }
 .douyin-entry-row .douyin-unavailable-reason { color: var(--red); white-space: normal; overflow-wrap: anywhere; }
-.douyin-entry-row > button { min-width: 132px; }
-.douyin-entry-row > button svg { width: 14px; height: 14px; }
+.douyin-entry-row > :is(button, .button-link) { min-width: 132px; }
+.douyin-entry-row > :is(button, .button-link) svg { width: 14px; height: 14px; }
 
 .main > .panel { margin-top: 18px; margin-bottom: 20px; }
 .settings-console { height: calc(100vh - 65px); padding: 14px 20px 18px; display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 18px; overflow: hidden; }
@@ -1032,7 +1032,7 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .account-entry-toolbar > span { display: grid; grid-template-columns: 1fr; }
   .account-entry-toolbar button { width: 100%; }
   .douyin-entry-row { grid-template-columns: 28px minmax(0,1fr); align-items: start; }
-  .douyin-entry-row > button { width: 100%; min-width: 0; grid-column: 2; }
+  .douyin-entry-row > :is(button, .button-link) { width: 100%; min-width: 0; grid-column: 2; }
   .account-runtime-status { align-items: flex-start; justify-content: flex-start; padding: 24px 4px; }
   .settings-console { height: auto; min-height: calc(100vh - 57px); padding: 10px 0 18px; display: block; overflow: visible; }
   .settings-nav { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--line); }

@@ -61,6 +61,8 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
             return await manager.resume_task(task_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Task not found") from exc
+        except DouyinProofError as exc:
+            raise HTTPException(status_code=424, detail={"code": exc.code, "message": str(exc)}) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

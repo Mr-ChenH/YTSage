@@ -424,6 +424,24 @@ class AccountService:
         if exc.code == "account_login_invalid":
             self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
 
+    def douyin_video_info(self, account_id: str, canonical_url: str) -> dict[str, object]:
+        account = self.storage.get_account(account_id)
+        if account.platform != "douyin":
+            raise AccountConflictError("The selected account does not match this platform.")
+        lock = self._resource_lock(account_id)
+        try:
+            with lock:
+                return self.douyin.video_info(
+                    self.resolve_cookie_file(account_id, "douyin"),
+                    canonical_url,
+                )
+        except ProviderError as exc:
+            self._record_provider_error(account_id, exc)
+            raise
+
+    def resolve_douyin_thumbnail(self, token: str) -> str:
+        return self.douyin.resolve_image(token)
+
     def list_all_entries(self, account_id: str, resource_id: str) -> tuple[AccountResource, list[PlaylistEntry]]:
         account = self.storage.get_account(account_id)
         try:

@@ -641,6 +641,79 @@ def test_high_offset_requests_enough_deduplicated_records_and_reports_truncation
     assert result.page.total == 56
 
 
+def test_nonstandard_aweme_types_with_video_payloads_remain_available(account, tmp_path: Path):
+    media = {
+        "duration": 2500,
+        "format": "mp4",
+        "play_addr": {"url_list": ["https://v26-web.douyinvod.com/video"]},
+        "cover": {"url_list": ["https://p3.douyinpic.com/cover.jpg"]},
+    }
+    audio_only = {
+        "duration": 2500,
+        "play_addr": {"url_list": ["https://sf11-cdn-tos.douyinstatic.com/audio.mp3"]},
+    }
+    driver = FakeDriver([[{"aweme_list": [
+        aweme("61", aweme_type=61, video=media),
+        aweme("68", aweme_type=68, video=media),
+        aweme("69", aweme_type=68, video=audio_only),
+    ], "total": 3}]])
+    client = DouyinResourceClient(driver=driver, secret=b"x" * 32)
+    token = client._encode(account.id, "douyin_favorites", "current")
+
+    entries = client.list_entries(account, tmp_path / "cookies.txt", token, 0, 20).entries
+
+    assert [entry.is_available for entry in entries] == [True, True, False]
+    assert [entry.url for entry in entries[:2]] == [
+        "https://www.douyin.com/video/61",
+        "https://www.douyin.com/video/68",
+    ]
+    assert entries[2].url is None
+    assert "douyinvod" not in str([entry.model_dump() for entry in entries])
+
+
+def test_video_info_uses_page_generated_detail_response(account, tmp_path: Path):
+    video = {
+        "duration": 2500,
+        "width": 1080,
+        "height": 1920,
+        "format": "mp4",
+        "bit_rate": [{
+            "gear_name": "normal_1080_0",
+            "bit_rate": 900000,
+            "FPS": 30,
+            "play_addr": {
+                "url_list": ["https://v26-web.douyinvod.com/video?signature=opaque"],
+                "width": 1080,
+                "height": 1920,
+                "data_size": 1024,
+            },
+        }],
+        "cover": {"url_list": ["https://p3.douyinpic.com/cover.jpg?signature=hidden"]},
+    }
+    driver = FakeDriver([[{"status_code": 0, "aweme_detail": {
+        "aweme_id": "1234567890123456789",
+        "desc": "Saved video",
+        "video": video,
+        "author": {"nickname": "Creator"},
+    }}]])
+    client = DouyinResourceClient(driver=driver, secret=b"x" * 32)
+    canonical = "https://www.douyin.com/video/1234567890123456789"
+
+    info = client.video_info(tmp_path / "cookies.txt", canonical)
+
+    assert driver.calls[0][1] == canonical
+    assert driver.calls[0][2] == ("/aweme/v1/web/aweme/detail/",)
+    assert driver.calls[0][3]["payload_kind"] == "detail"
+    assert driver.calls[0][3]["resource_kind"] == "douyin_video"
+    assert info["title"] == "Saved video"
+    assert info["formats"][0]["format_id"] == "browser-1-1920p-h264"
+    assert info["formats"][0]["url"].endswith("signature=opaque")
+    assert info["thumbnail"].startswith("/api/media/douyin-thumbnail/")
+    assert "signature" not in info["thumbnail"]
+    token = info["thumbnail"].rsplit("/", 1)[-1]
+    assert client.resolve_image(token).endswith("signature=hidden")
+
+
 def test_unavailable_private_deleted_and_image_items_have_no_media_urls(account, tmp_path: Path):
     items = [
         aweme("1", is_delete=True),
@@ -649,7 +722,7 @@ def test_unavailable_private_deleted_and_image_items_have_no_media_urls(account,
         aweme("4", status={"is_prohibited": True}),
         aweme("5", status={"in_reviewing": True}),
         aweme("6", status={"allow_share": False}),
-        {"aweme_id": "7", "desc": "Images", "aweme_type": 68, "images": [{}]},
+        {"aweme_id": "7", "desc": "Images", "aweme_type": 68, "images": [{"url_list": ["https://p3.douyinpic.com/image.jpg"]}], "video": {"duration": 2500, "play_addr": {"url_list": ["https://sf11-cdn-tos.douyinstatic.com/audio.mp3"]}}},
         {"aweme_id": "8", "desc": "Missing video", "aweme_type": 0},
     ]
     driver = FakeDriver([[{"aweme_list": items, "total": len(items)}]])
@@ -658,7 +731,15 @@ def test_unavailable_private_deleted_and_image_items_have_no_media_urls(account,
 
     entries = client.list_entries(account, tmp_path / "cookies.txt", token, 0, 20).entries
 
-    assert all(not entry.is_available and entry.url is None and entry.webpage_url is None for entry in entries)
+    blocked_entries = entries[:6] + entries[7:]
+    assert all(not entry.is_available and entry.url is None and entry.webpage_url is None for entry in blocked_entries)
+    image_album = entries[6]
+    assert image_album.entry_type == "image_album"
+    assert image_album.is_available is False
+    assert image_album.url is None
+    assert image_album.webpage_url == "https://www.douyin.com/video/7"
+    assert image_album.thumbnail_url == "https://p3.douyinpic.com/image.jpg"
+    assert image_album.unavailable_reason == "This Douyin item is an image post with background audio, not a video."
     assert "douyinpic.com" in (entries[0].thumbnail_url or "")
     assert "play_addr" not in str([entry.model_dump() for entry in entries])
 

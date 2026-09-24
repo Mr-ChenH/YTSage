@@ -121,6 +121,12 @@ class DouyinProvider:
     def list_entries(self, account: Any, cookie_file: Path, resource_id: str, offset: int, limit: int) -> Any:
         return self.resource_client.list_entries(account, cookie_file, resource_id, offset, limit)
 
+    def video_info(self, cookie_file: Path, canonical_url: str) -> dict[str, Any]:
+        return self.resource_client.video_info(cookie_file, canonical_url)
+
+    def resolve_image(self, token: str) -> str:
+        return self.resource_client.resolve_image(token)
+
     def close(self) -> None:
         self.resource_client.close()
 

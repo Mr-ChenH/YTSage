@@ -241,17 +241,13 @@ def test_douyin_analysis_uses_account_cookie_and_reports_target_probe(tmp_path: 
     account_service = Mock()
     account_service.storage.get_account.return_value = account
     account_service.resolve_cookie_file.return_value = cookie_file
-    result = Mock(returncode=0, stderr="")
-    result.stdout = json.dumps({
+    account_service.douyin_video_info.return_value = {
         "title": "Douyin video",
         "formats": [{"format_id": "download", "ext": "mp4", "vcodec": "h264", "acodec": "none", "url": "https://v.example/video.mp4"}],
-    })
+    }
 
     proofs = DouyinDownloadProofStore()
-    with (
-        patch("ytsage.server.services.analyzer.ytdlp_base_command", return_value=["yt-dlp"]),
-        patch("ytsage.server.services.analyzer.subprocess.run", return_value=result) as run,
-    ):
+    with patch("ytsage.server.services.analyzer.subprocess.run") as run:
         response = analyze(
             AnalyzeRequest(url="https://www.douyin.com/video/1234567890123456789", account_id="account"),
             config_dir=tmp_path,
@@ -259,13 +255,67 @@ def test_douyin_analysis_uses_account_cookie_and_reports_target_probe(tmp_path: 
             douyin_proofs=proofs,
         )
 
-    command = run.call_args.args[0]
-    assert command[command.index("--cookies") + 1] == str(cookie_file)
+    run.assert_not_called()
+    account_service.douyin_video_info.assert_called_once_with(
+        "account", "https://www.douyin.com/video/1234567890123456789"
+    )
     assert response.raw["account_identity_state"] == "unknown"
     assert response.raw["target_extraction_state"] == "valid"
     assert response.raw["resolved_single_video_url"] == "https://www.douyin.com/video/1234567890123456789"
     assert response.douyin_download_proof
     proofs.consume(response.douyin_download_proof, response.raw["resolved_single_video_url"], "account")
+
+
+def test_douyin_analysis_uses_page_generated_video_detail(tmp_path: Path) -> None:
+    cookie_file = tmp_path / "accounts" / "account" / "cookies.txt"
+    cookie_file.parent.mkdir(parents=True)
+    cookie_file.write_text(normalize_cookies(DOUYIN_HEADER, ".douyin.com") or "", encoding="utf-8")
+    account = Mock(id="account", platform="douyin", label="Primary", state="unknown")
+    account_service = Mock()
+    account_service.storage.get_account.return_value = account
+    account_service.resolve_cookie_file.return_value = cookie_file
+    media_url = "https://v26-web.douyinvod.com/video?signature=opaque"
+    account_service.douyin_video_info.return_value = {
+        "id": "1234567890123456789",
+        "title": "Browser video",
+        "webpage_url": "https://www.douyin.com/video/1234567890123456789",
+        "extractor": "DouyinBrowser",
+        "channel": "Creator",
+        "formats": [{
+            "format_id": "browser-1-1080p-h264",
+            "url": media_url,
+            "ext": "mp4",
+            "width": 1080,
+            "height": 1920,
+            "vcodec": "h264",
+            "acodec": "aac",
+        }],
+    }
+    proofs = DouyinDownloadProofStore()
+
+    with patch("ytsage.server.services.analyzer.subprocess.run") as run:
+        response = analyze(
+            AnalyzeRequest(url="https://www.douyin.com/video/1234567890123456789", account_id="account"),
+            config_dir=tmp_path,
+            account_service=account_service,
+            douyin_proofs=proofs,
+        )
+
+    run.assert_not_called()
+    account_service.douyin_video_info.assert_called_once_with(
+        "account", "https://www.douyin.com/video/1234567890123456789"
+    )
+    assert response.title == "Browser video"
+    assert response.raw["target_extraction_state"] == "valid"
+    assert response.formats[0].format_id == "browser-1-1080p-h264"
+    assert media_url not in json.dumps(response.model_dump())
+    media_info = proofs.consume(
+        response.douyin_download_proof,
+        "https://www.douyin.com/video/1234567890123456789",
+        "account",
+    )
+    assert media_info is not None
+    assert media_info["formats"][0]["url"] == media_url
 
 
 def test_douyin_analysis_marks_metadata_without_formats_unavailable(tmp_path: Path) -> None:
@@ -276,13 +326,10 @@ def test_douyin_analysis_marks_metadata_without_formats_unavailable(tmp_path: Pa
     account_service = Mock()
     account_service.storage.get_account.return_value = account
     account_service.resolve_cookie_file.return_value = cookie_file
-    result = Mock(returncode=0, stderr="", stdout=json.dumps({"title": "Metadata only"}))
+    account_service.douyin_video_info.return_value = {"title": "Metadata only", "formats": []}
 
     proofs = DouyinDownloadProofStore()
-    with (
-        patch("ytsage.server.services.analyzer.ytdlp_base_command", return_value=["yt-dlp"]),
-        patch("ytsage.server.services.analyzer.subprocess.run", return_value=result),
-    ):
+    with patch("ytsage.server.services.analyzer.subprocess.run") as run:
         response = analyze(
             AnalyzeRequest(url="https://www.douyin.com/video/1234567890123456789", account_id="account"),
             config_dir=tmp_path,
@@ -290,6 +337,7 @@ def test_douyin_analysis_marks_metadata_without_formats_unavailable(tmp_path: Pa
             douyin_proofs=proofs,
         )
 
+    run.assert_not_called()
     assert response.raw["target_extraction_state"] == "unavailable"
     assert response.raw["warning_code"] == "metadata_without_formats"
     assert response.douyin_download_proof is None
@@ -367,6 +415,27 @@ async def test_douyin_task_accepts_bound_proof_once(tmp_path: Path) -> None:
     assert "douyin_download_proof" not in task.options
     with pytest.raises(DouyinProofError, match="already used"):
         await manager.create_task(CreateTaskRequest(url=url, douyin_download_proof=proof))
+
+
+@pytest.mark.anyio
+async def test_douyin_task_keeps_proof_media_only_in_memory(tmp_path: Path) -> None:
+    proofs = DouyinDownloadProofStore()
+    manager = TaskManager(Mock(config_dir=tmp_path), Storage(tmp_path / "server.db"), douyin_proofs=proofs)
+    manager._publish = AsyncMock()
+    url = "https://www.douyin.com/video/1234567890123456789"
+    media_url = "https://v26-web.douyinvod.com/video?signature=opaque"
+    proof = proofs.issue(url, None, {
+        "id": "1234567890123456789",
+        "title": "Video",
+        "webpage_url": url,
+        "formats": [{"format_id": "browser", "url": media_url}],
+    })
+
+    task = await manager.create_task(CreateTaskRequest(url=url, douyin_download_proof=proof))
+
+    assert manager._douyin_media_info[task.id]["formats"][0]["url"] == media_url
+    assert media_url not in json.dumps(task.model_dump())
+    assert "douyin_download_proof" not in task.options
 
 
 @pytest.mark.anyio
@@ -555,6 +624,41 @@ async def test_douyin_history_redownload_requires_new_analysis(tmp_path: Path) -
         "message": "Analyze this Douyin video before creating a download task.",
     }
     assert [task.id for task in storage.list_tasks()] == ["original"]
+
+
+@pytest.mark.anyio
+async def test_douyin_resume_and_recovered_tasks_require_new_analysis(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "server.db")
+    url = "https://www.douyin.com/video/1234567890123456789"
+    task = storage.create_task("interrupted", CreateTaskRequest(url=url))
+    storage.update_task(task.id, status="failed")
+    manager = TaskManager(Mock(config_dir=tmp_path), storage)
+    manager._publish = AsyncMock()
+    manager._execute_download = AsyncMock()
+
+    with pytest.raises(DouyinProofError) as exc:
+        await manager.resume_task(task.id)
+    assert exc.value.code == "douyin_analysis_required"
+
+    recovered = storage.update_task(task.id, status="queued", error=None, finished_at=None)
+    await manager._run_task(recovered)
+
+    failed = storage.get_task(task.id)
+    assert failed.status == "failed"
+    assert "Analyze this Douyin video again" in (failed.error or "")
+    manager._execute_download.assert_not_awaited()
+    manager._publish.assert_awaited_once()
+
+    router = create_tasks_router(Mock(config_dir=tmp_path), storage, manager, lambda: None)
+    resume_endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if route.path == "/api/tasks/{task_id}/resume" and "POST" in route.methods
+    )
+    with pytest.raises(HTTPException) as api_error:
+        await resume_endpoint(task.id)
+    assert api_error.value.status_code == 424
+    assert api_error.value.detail["code"] == "douyin_analysis_required"
 
 
 @pytest.mark.anyio

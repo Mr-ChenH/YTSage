@@ -44,11 +44,17 @@ def build_download_command(
     download_dir: Path,
     *,
     single_item_directory: bool | None = None,
+    load_info_json: bool = False,
 ) -> list[str]:
     if single_item_directory is None:
         single_item_directory = not bool(request.playlist_entries or request.playlist_items or "%(playlist_" in request.filename_template)
     output_template = _single_item_filename_template(request) if single_item_directory else request.filename_template
-    cmd = [*ytdlp_base_command(), request.url, "--newline", "--progress", "--encoding", "utf-8", "-P", str(download_dir), "-o", output_template]
+    cmd = [*ytdlp_base_command()]
+    if load_info_json:
+        cmd.extend(["--load-info-json", "-"])
+    else:
+        cmd.append(request.url)
+    cmd.extend(["--newline", "--progress", "--encoding", "utf-8", "-P", str(download_dir), "-o", output_template])
     if is_douyin_url(request.url):
         cmd.append("--no-playlist")
     ffmpeg_location = ffmpeg_location_arg()

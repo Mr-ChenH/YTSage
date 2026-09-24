@@ -236,6 +236,24 @@ def test_douyin_download_explicitly_disables_playlist_expansion() -> None:
     assert "--no-playlist" in command
 
 
+def test_douyin_ephemeral_media_uses_stdin_without_command_line_url() -> None:
+    request = CreateTaskRequest(
+        url="https://www.douyin.com/video/1234567890123456789",
+        format_id="browser-1-1080p-h264",
+    )
+
+    with (
+        patch("ytsage.server.services.download_service.ytdlp_base_command", return_value=["yt-dlp"]),
+        patch("ytsage.server.services.download_service.ffmpeg_location_arg", return_value=None),
+    ):
+        command = build_download_command(request, Path("/downloads"), load_info_json=True)
+
+    assert command[command.index("--load-info-json") + 1] == "-"
+    assert request.url not in command
+    assert command[command.index("-f") + 1].startswith("browser-1-1080p-h264")
+    assert "--no-playlist" in command
+
+
 def test_non_youtube_download_does_not_enable_youtube_workarounds() -> None:
     request = CreateTaskRequest(url="https://www.bilibili.com/video/BVexample")
 

@@ -13,6 +13,18 @@ export function formatBytes(value?: number | null): string {
   return `${size.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+export function formatDuration(value?: number | null): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '-';
+  const totalSeconds = Math.max(1, Math.round(value));
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 export function formatPageInfo(template: string, page: number, pages: number, total: number): string {
   return template.replace('{page}', String(page)).replace('{pages}', String(pages)).replace('{total}', String(total));
 }

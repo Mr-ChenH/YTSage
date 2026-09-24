@@ -13,8 +13,9 @@ from fastapi import HTTPException, status
 
 from ..analyzers import bilibili
 from ..models import AnalyzeRequest, AnalyzeResponse, FormatInfo, PlaylistEntry, SubtitleInfo
+from ..providers.base import ProviderError
 from ..providers.bilibili import BilibiliProviderError
-from ..providers.douyin import canonical_douyin_video_url
+from ..providers.douyin import canonical_douyin_video_url, canonicalize_douyin_video_url
 from .cookies import COOKIE_PROFILES, cookie_file_for_url, cookie_file_path, cookie_profile_for_url, cookie_profile_status, save_cookie_login_status, youtube_login_cookies_present
 from .dependencies import ytdlp_base_command
 from .douyin_proofs import DouyinDownloadProofStore
@@ -88,14 +89,94 @@ def _has_downloadable_formats(items: Any) -> bool:
     return False
 
 
+def _safe_media_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+    ):
+        return None
+    return value
+
+
+def _douyin_download_info(data: dict[str, Any], canonical_url: str) -> dict[str, object] | None:
+    formats: list[dict[str, object]] = []
+    for item in _as_dict_list(data.get("formats")):
+        media_url = _safe_media_url(item.get("url"))
+        format_id = _as_str(item.get("format_id"))
+        if not media_url or not format_id:
+            continue
+        media_format: dict[str, object] = {
+            "format_id": format_id,
+            "url": media_url,
+            "http_headers": {"Referer": canonical_url},
+        }
+        for key in ("ext", "vcodec", "acodec"):
+            value = _as_str(item.get(key))
+            if value:
+                media_format[key] = value
+        for key in ("width", "height", "filesize", "filesize_approx"):
+            value = _as_int(item.get(key))
+            if value is not None:
+                media_format[key] = value
+        for key in ("fps", "tbr"):
+            value = _as_float(item.get(key))
+            if value is not None:
+                media_format[key] = value
+        formats.append(media_format)
+    if not formats:
+        return None
+    media_id = canonical_url.rstrip("/").rsplit("/", 1)[-1]
+    result: dict[str, object] = {
+        "id": media_id,
+        "title": _as_str(data.get("title")) or "Douyin video",
+        "webpage_url": canonical_url,
+        "extractor": "DouyinBrowser",
+        "formats": formats,
+    }
+    for key in ("channel", "uploader", "thumbnail"):
+        value = _as_str(data.get(key))
+        if value:
+            result[key] = value
+    duration = _as_float(data.get("duration"))
+    if duration is not None:
+        result["duration"] = duration
+    return result
+
+
+def _douyin_browser_failure(exc: ProviderError) -> HTTPException:
+    if exc.code == "account_login_invalid":
+        return HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail={"code": "fresh_cookies_required", "message": "Fresh Douyin cookies are required."},
+        )
+    code = exc.code if exc.code in {"provider_risk_control", "provider_timeout", "provider_unavailable"} else "provider_unavailable"
+    http_status = exc.status_code if code != "provider_unavailable" else status.HTTP_503_SERVICE_UNAVAILABLE
+    message = {
+        "provider_risk_control": "Douyin blocked the analysis with a verification challenge.",
+        "provider_timeout": "Douyin analysis timed out. Try again.",
+        "provider_unavailable": "Douyin analysis is currently unavailable.",
+    }[code]
+    return HTTPException(status_code=http_status, detail={"code": code, "message": message})
+
+
 def _douyin_analysis_failure(output: str, *, timed_out: bool = False) -> HTTPException:
     text = output.lower()
     if timed_out:
         code, message, http_status = "provider_timeout", "Douyin analysis timed out. Try again.", status.HTTP_504_GATEWAY_TIMEOUT
-    elif any(marker in text for marker in ("fresh cookies", "cookies are no longer valid", "login required", "sign in to confirm", "not logged in")):
-        code, message, http_status = "fresh_cookies_required", "Fresh Douyin cookies are required.", status.HTTP_424_FAILED_DEPENDENCY
     elif "403" in text or any(marker in text for marker in ("captcha", "challenge", "risk control", "risk-control", "verify you are human")):
         code, message, http_status = "provider_risk_control", "Douyin blocked the analysis with a verification challenge.", status.HTTP_503_SERVICE_UNAVAILABLE
+    elif any(marker in text for marker in ("fresh cookies", "cookies are no longer valid", "login required", "sign in to confirm", "not logged in")):
+        code, message, http_status = "fresh_cookies_required", "Fresh Douyin cookies are required.", status.HTTP_424_FAILED_DEPENDENCY
     else:
         code, message, http_status = "provider_unavailable", "Douyin analysis is currently unavailable.", status.HTTP_503_SERVICE_UNAVAILABLE
     return HTTPException(status_code=http_status, detail={"code": code, "message": message})
@@ -219,9 +300,21 @@ def analyze(
         except BilibiliProviderError as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    douyin_account_video = None
+    direct_douyin_url = canonicalize_douyin_video_url(request.url) if requested_profile == "douyin" else None
+    if direct_douyin_url and selected_account is not None and account_service is not None:
+        try:
+            douyin_account_video = account_service.douyin_video_info(selected_account.id, direct_douyin_url)
+        except ProviderError as exc:
+            raise _douyin_browser_failure(exc) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=str(exc)) from exc
+
     if account_favorite is not None:
         # The account provider is authoritative for favorites and also handles empty collections.
         data: dict[str, Any] = {}
+    elif douyin_account_video is not None:
+        data = douyin_account_video
     else:
         cmd = [*ytdlp_base_command(), "--dump-single-json", "--flat-playlist", "--skip-download"]
         if cookie_file is not None:
@@ -354,5 +447,11 @@ def analyze(
 
     proof = None
     if requested_profile == "douyin" and douyin_has_downloadable_formats and douyin_proofs is not None:
-        proof = douyin_proofs.issue(raw["resolved_single_video_url"], request.account_id)
+        download_info = _douyin_download_info(data, raw["resolved_single_video_url"])
+        if download_info is not None:
+            proof = douyin_proofs.issue(
+                raw["resolved_single_video_url"],
+                request.account_id,
+                download_info,
+            )
     return AnalyzeResponse(url=request.url, title=collection_title or _as_str(data.get("title")), channel=_as_str(data.get("channel") or data.get("uploader")), duration=_as_float(data.get("duration")), thumbnail_url=thumbnail_url, is_playlist=is_playlist, playlist_count=len(playlist_entries) if is_playlist else None, playlist_entries=playlist_entries, formats=formats, subtitles=_subtitles_from(data), raw=raw, douyin_download_proof=proof)

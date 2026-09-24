@@ -2,6 +2,7 @@ import { ExternalLink, ListVideo, Radio, Subtitles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AnalyzeResponse } from '../../api/types';
 import type { T } from '../../i18n';
+import { formatDuration } from '../../shared/format';
 import { rawText } from './workspaceUtils';
 
 function warningText(analysis: AnalyzeResponse, t: T): string | null {
@@ -52,7 +53,7 @@ export function AnalysisSummary({ analysis, t }: { analysis: AnalyzeResponse | n
     <div className="media-preview"><img key={thumbnailUrl} src={thumbnailUrl} alt="" referrerPolicy="no-referrer" onError={() => setThumbnailFailed(true)} /></div>
     <div className="media-summary-copy">
       <div className="media-title-row"><div><span>{analysis.is_playlist ? t('playlist') : t('mediaReady')}</span><h2>{analysis.title || t('untitled')}</h2></div>{sourceUrl && <a className="icon-button" href={sourceUrl} target="_blank" rel="noreferrer" title={t('sourcePage')}><ExternalLink aria-hidden="true" /></a>}</div>
-      <p>{analysis.channel || t('unknownChannel')}{analysis.duration ? ` · ${Math.round(analysis.duration / 60)} ${t('minutes')}` : ''}{extractor ? ` · ${extractor}` : ''}</p>
+      <p>{analysis.channel || t('unknownChannel')}{analysis.duration ? ` · ${formatDuration(analysis.duration)}` : ''}{extractor ? ` · ${extractor}` : ''}</p>
       <div className="media-stats"><span><Radio aria-hidden="true" />{analysis.formats.length} {t('formatsCount')}</span><span><Subtitles aria-hidden="true" />{analysis.subtitles.length} {t('subtitles')}</span>{analysis.is_playlist && <span><ListVideo aria-hidden="true" />{analysis.playlist_count} {t('playlistItems')}</span>}</div>
       <div className="badge-row">{targetExtraction?.tone !== 'red' && <span className={`badge ${warning ? 'amber' : 'green'}`}>{warning ? t('fallbackFormats') : t('formatsReady')}</span>}{cookieExpiry && <span className={`badge ${cookieExpiry.error ? 'red' : 'green'}`}>{cookieExpiry.text}</span>}{accountIdentity && <span className={`badge ${accountIdentity.tone}`}>{accountIdentity.text}</span>}{targetExtraction && <span className={`badge ${targetExtraction.tone}`}>{targetExtraction.text}</span>}{cookieLogin && <span className={`badge ${cookieLogin.error ? 'red' : cookieLogin.text === t('cookieLoginUnknown') ? 'amber' : 'green'}`}>{cookieLogin.text}</span>}</div>
     </div>

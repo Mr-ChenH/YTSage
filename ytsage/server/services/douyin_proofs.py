@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import secrets
 import threading
 import time
@@ -23,6 +24,7 @@ class _Proof:
     canonical_url: str
     account_id: str | None
     expires_at: float
+    media_info: dict[str, object] | None
 
 
 class DouyinDownloadProofStore:
@@ -38,15 +40,30 @@ class DouyinDownloadProofStore:
         self._proofs: dict[str, _Proof] = {}
         self._lock = threading.Lock()
 
-    def issue(self, canonical_url: str, account_id: str | None) -> str:
+    def issue(
+        self,
+        canonical_url: str,
+        account_id: str | None,
+        media_info: dict[str, object] | None = None,
+    ) -> str:
         token = secrets.token_urlsafe(32)
         now = self.clock()
         with self._lock:
             self._purge_expired(now)
-            self._proofs[token] = _Proof(canonical_url, account_id, now + self.ttl_seconds)
+            self._proofs[token] = _Proof(
+                canonical_url,
+                account_id,
+                now + self.ttl_seconds,
+                copy.deepcopy(media_info),
+            )
         return token
 
-    def consume(self, token: str | None, canonical_url: str, account_id: str | None) -> None:
+    def consume(
+        self,
+        token: str | None,
+        canonical_url: str,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
         if not token:
             raise DouyinProofError(
                 "douyin_analysis_required",
@@ -71,6 +88,7 @@ class DouyinDownloadProofStore:
                 "douyin_proof_mismatch",
                 "The Douyin analysis authorization does not match this URL and account.",
             )
+        return copy.deepcopy(proof.media_info)
 
     def _purge_expired(self, now: float) -> None:
         expired = [token for token, proof in self._proofs.items() if proof.expires_at <= now]

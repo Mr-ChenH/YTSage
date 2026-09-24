@@ -1,7 +1,7 @@
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type MediaType = 'video' | 'audio' | 'subtitle' | 'other';
 export type DownloadMode = 'video' | 'audio' | 'subtitles';
-export type PlaylistEntryType = 'video' | 'multipart_video' | 'favorite_collection' | 'audio';
+export type PlaylistEntryType = 'video' | 'multipart_video' | 'favorite_collection' | 'audio' | 'image_album';
 
 export interface HealthResponse {
   healthy: boolean;

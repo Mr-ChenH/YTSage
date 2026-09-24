@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
@@ -16,6 +18,11 @@ if TYPE_CHECKING:
     from ..services.accounts import AccountService
 
 PublishCallback = Callable[[str, TaskResponse], Awaitable[None]]
+_MEDIA_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def _sanitize_media_output(line: str) -> str:
+    return _MEDIA_URL_RE.sub("<media-url>", line)
 
 
 class DownloadExecutor:
@@ -45,7 +52,15 @@ class DownloadExecutor:
             return output, 0, fallback_path, progress
         return output, fallback_code, fallback_path, progress
 
-    async def execute(self, task: TaskResponse, request: CreateTaskRequest, progress: TaskProgress, *, use_cookies: bool = True) -> tuple[list[str], int, str | None, TaskProgress]:
+    async def execute(
+        self,
+        task: TaskResponse,
+        request: CreateTaskRequest,
+        progress: TaskProgress,
+        *,
+        use_cookies: bool = True,
+        media_info: dict[str, object] | None = None,
+    ) -> tuple[list[str], int, str | None, TaskProgress]:
         if use_cookies and request.account_id:
             if self.account_service is None:
                 return ["The selected account is unavailable."], 1, None, progress
@@ -61,7 +76,12 @@ class DownloadExecutor:
         started = self.storage.update_task(task.id, status="running", progress=progress, started_at=utc_now())
         await self.publish("task_started", started)
 
-        cmd = build_download_command(request, self.config.download_dir, single_item_directory=not bool(task.options.get("playlist_entries")))
+        cmd = build_download_command(
+            request,
+            self.config.download_dir,
+            single_item_directory=not bool(task.options.get("playlist_entries")),
+            load_info_json=media_info is not None,
+        )
         process_kwargs: dict[str, object] = {}
         process_env = os.environ.copy()
         process_env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -74,7 +94,14 @@ class DownloadExecutor:
 
         output_tail: list[str] = []
         try:
-            process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=process_env, **process_kwargs)
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE if media_info is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=process_env,
+                **process_kwargs,
+            )
         except FileNotFoundError:
             return ["yt-dlp is not installed"], 127, None, progress
         except Exception as exc:
@@ -82,6 +109,15 @@ class DownloadExecutor:
 
         self.processes[task.id] = process
         try:
+            if media_info is not None:
+                assert process.stdin is not None
+                try:
+                    process.stdin.write(json.dumps(media_info, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
+                    await process.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    process.stdin.close()
             assert process.stdout is not None
             while True:
                 raw = await process.stdout.readline()
@@ -89,6 +125,8 @@ class DownloadExecutor:
                     break
                 line = decode_output_line(raw).strip()
                 if line:
+                    if media_info is not None:
+                        line = _sanitize_media_output(line)
                     output_tail = [*output_tail, line][-20:]
                     progress = parse_progress_line(line, progress)
                     await self.publish("task_progress", self.storage.update_task(task.id, progress=progress))

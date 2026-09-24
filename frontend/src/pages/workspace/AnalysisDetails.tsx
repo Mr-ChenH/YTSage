@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AnalyzeResponse, DownloadMode, FormatInfo, PlaylistEntry } from '../../api/types';
 import type { T } from '../../i18n';
-import { formatBytes, formatPageInfo } from '../../shared/format';
+import { formatBytes, formatDuration, formatPageInfo } from '../../shared/format';
 import { paginationItems } from '../../shared/pagination';
 import { modeFormats } from './workspaceUtils';
 
@@ -44,7 +44,7 @@ function PlaylistTable({ entries, selected, onSelected, t }: { entries: Playlist
   }
   return <div className="playlist-selector">
     <div className="playlist-selector-toolbar"><div><strong>{selected.length}</strong><span>{t('selectedItemsCount')}</span></div><div className="toolbar"><span className="badge">{formatPageInfo(t('pageInfo'), page + 1, pageCount, entries.length)}</span><button onClick={() => onSelected(entries.map((entry) => entry.index))} disabled={allSelected}>{t('allItems')}</button><button onClick={() => onSelected([])} disabled={!selected.length}>{t('clearItems')}</button></div></div>
-    <div className="table-wrap playlist-wrap"><table><thead><tr><th>{t('pick')}</th><th>{t('playlistIndex')}</th><th>{t('title')}</th><th>{t('channel')}</th><th>{t('duration')}</th></tr></thead><tbody>{pageEntries.map((entry) => <tr key={entry.index} className={selectedSet.has(entry.index) ? 'selected' : ''} onClick={() => toggle(entry.index)}><td><input type="checkbox" checked={selectedSet.has(entry.index)} onChange={() => toggle(entry.index)} onClick={(event) => event.stopPropagation()} /></td><td>{entry.index}</td><td><strong>{entry.title || entry.id || entry.url || '-'}</strong></td><td>{entry.channel || '-'}</td><td>{entry.duration ? `${Math.round(entry.duration / 60)} ${t('minutes')}` : '-'}</td></tr>)}</tbody></table></div>
+    <div className="table-wrap playlist-wrap"><table><thead><tr><th>{t('pick')}</th><th>{t('playlistIndex')}</th><th>{t('title')}</th><th>{t('channel')}</th><th>{t('duration')}</th></tr></thead><tbody>{pageEntries.map((entry) => <tr key={entry.index} className={selectedSet.has(entry.index) ? 'selected' : ''} onClick={() => toggle(entry.index)}><td><input type="checkbox" checked={selectedSet.has(entry.index)} onChange={() => toggle(entry.index)} onClick={(event) => event.stopPropagation()} /></td><td>{entry.index}</td><td><strong>{entry.title || entry.id || entry.url || '-'}</strong></td><td>{entry.channel || '-'}</td><td>{entry.duration ? formatDuration(entry.duration) : '-'}</td></tr>)}</tbody></table></div>
     <div className="playlist-pagination"><button onClick={() => setPage(Math.max(0, page - 1))} disabled={page <= 0}>{t('previousPage')}</button><div className="page-list compact-page-list" aria-label="Pagination">{pageItems.map((item, index) => item === 'ellipsis' ? <span className="page-ellipsis" key={`playlist-ellipsis-${index}`}>...</span> : <button className={item === page + 1 ? 'active' : ''} key={item} onClick={() => setPage(item - 1)} disabled={item === page + 1} aria-current={item === page + 1 ? 'page' : undefined}>{item}</button>)}</div><button onClick={() => setPage(Math.min(pageCount - 1, page + 1))} disabled={page >= pageCount - 1}>{t('nextPage')}</button></div>
   </div>;
 }
