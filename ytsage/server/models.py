@@ -78,6 +78,7 @@ class AnalyzeResponse(BaseModel):
     formats: list[FormatInfo] = Field(default_factory=list)
     subtitles: list[SubtitleInfo] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
+    douyin_download_proof: str | None = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -97,6 +98,7 @@ class CreateTaskRequest(BaseModel):
     concurrent_fragments: int | None = Field(default=None, ge=1, le=16)
     cookie_file: str | None = None
     account_id: str | None = None
+    douyin_download_proof: str | None = Field(default=None, exclude=True, min_length=20, max_length=256)
     playlist_items: str | None = None
     playlist_title: str | None = None
     playlist_entries: list[PlaylistEntry] = Field(default_factory=list)
@@ -248,9 +250,9 @@ class CookieSaveResponse(BaseModel):
     status: CookieProfileStatus | None = None
 
 
-Platform = Literal["bilibili"]
+Platform = Literal["bilibili", "douyin"]
 AccountState = Literal["valid", "invalid", "unknown", "expired"]
-AccountResourceType = Literal["created_favorite", "collected_favorite", "watch_later", "collection", "series"]
+AccountResourceType = Literal["created_favorite", "collected_favorite", "watch_later", "collection", "series", "douyin_works", "douyin_favorites", "douyin_collections", "douyin_collection"]
 
 
 class AccountCreateRequest(BaseModel):
@@ -403,6 +405,8 @@ class HealthResponse(BaseModel):
     ffmpeg: str
     queue_concurrency: int
     auth_configured: bool
+    douyin_browser_available: bool = False
+    douyin_browser_engine: str = "playwright-chromium"
 
 
 class DependencyStatusResponse(BaseModel):

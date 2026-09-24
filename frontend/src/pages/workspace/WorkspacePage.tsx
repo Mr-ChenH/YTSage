@@ -1,7 +1,7 @@
 import { ChevronDown, ClipboardPaste, Download, ListVideo, LoaderCircle, Radar, Settings2, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { ApiClient } from '../../api/client';
-import type { CreateTaskRequest, DownloadMode, PlatformAccount, SettingsResponse, TaskResponse } from '../../api/types';
+import { ApiError, type ApiClient } from '../../api/client';
+import type { CreateTaskRequest, DownloadMode, Platform, PlatformAccount, SettingsResponse, TaskResponse } from '../../api/types';
 import { filenameTemplatePresets } from '../../config/download';
 import type { T, TKey } from '../../i18n';
 import { AnalysisDetails } from './AnalysisDetails';
@@ -59,6 +59,47 @@ function videoSpecification(format: ReturnType<typeof bestVideoFormat>, t: T): s
   return parts.length ? parts.join(' · ') : t('formatDetailsUnavailable');
 }
 
+function accountPlatformForUrl(value: string): Platform | null {
+  let host: string;
+  try {
+    host = new URL(value).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  const matches = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+  if (matches('bilibili.com') || matches('b23.tv')) return 'bilibili';
+  if (matches('douyin.com') || matches('iesdouyin.com')) return 'douyin';
+  return null;
+}
+
+function accountCanDownload(account: PlatformAccount): boolean {
+  if (!account.cookie_status.usable || account.state === 'invalid' || account.state === 'expired') return false;
+  return account.platform === 'douyin' || account.state === 'valid';
+}
+
+const analysisErrorKeys = {
+  fresh_cookies_required: 'douyinFreshCookiesRequired',
+  provider_risk_control: 'douyinRiskControl',
+  provider_timeout: 'douyinProviderTimeout',
+  provider_unavailable: 'douyinProviderUnavailable',
+} as const satisfies Partial<Record<string, TKey>>;
+
+const proofErrorCodes = new Set([
+  'douyin_analysis_required',
+  'douyin_proof_invalid',
+  'douyin_proof_expired',
+  'douyin_proof_mismatch',
+]);
+
+function errorText(error: unknown, t: T, context: 'analysis' | 'task', platform: Platform | null): string {
+  if (error instanceof ApiError && error.code) {
+    if (context === 'task' && proofErrorCodes.has(error.code)) return t('douyinReanalyzeRequired');
+    const key = analysisErrorKeys[error.code as keyof typeof analysisErrorKeys];
+    if (context === 'analysis' && platform === 'douyin' && key) return t(key);
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function WorkspacePage({ api, t, settings, state, onState, onTask }: WorkspacePageProps) {
   const {
     url, analysis, selectedFormat, audioFormat, videoOutputFormat, selectedSubtitleLangs,
@@ -67,6 +108,10 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
   } = state;
   const update = (patch: Partial<WorkspaceState>) => onState({ ...state, ...patch });
   const previousMode = useRef(mode);
+  const previousAccountPlatform = useRef<Platform | null>(null);
+  const initializedAccountPlatforms = useRef(new Set<Platform>());
+  const analysisVersion = useRef(0);
+  const creatingTask = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -75,29 +120,53 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
   const currentFormat = selectedFormat
     ? availableFormats.find((format) => format.format_id === selectedFormat) || null
     : mode === 'video' ? bestVideoFormat(analysis?.formats || []) : availableFormats.find((format) => format.format_id === 'bestaudio') || availableFormats[0] || null;
-  const canDownload = Boolean(analysis) && !busy && !(analysis?.is_playlist && selectedPlaylistIndexes.length === 0);
-  const isBilibiliUrl = /(?:^|\.)bilibili\.com|b23\.tv/i.test(url);
-  const effectiveAccountId = isBilibiliUrl ? accountId : null;
+  const targetExtractionState = analysis ? rawText(analysis, 'target_extraction_state') : null;
+  const canDownload = Boolean(analysis) && !busy && targetExtractionState !== 'unavailable' && !(analysis?.is_playlist && selectedPlaylistIndexes.length === 0);
+  const accountPlatform = accountPlatformForUrl(url);
+  const platformAccounts = accountPlatform ? accounts.filter((account) => account.platform === accountPlatform) : [];
+  const effectiveAccountId = accountPlatform && platformAccounts.some((account) => account.id === accountId && accountCanDownload(account)) ? accountId : null;
 
   useEffect(() => {
-    void api.accounts().then((items) => {
-      setAccounts(items);
-      const currentAccount = items.find((item) => item.id === accountId && item.state === 'valid');
-      if (!currentAccount) {
-        const defaultAccount = items.find((item) => item.platform === 'bilibili' && item.is_default && item.state === 'valid');
-        update({ accountId: defaultAccount?.id || null, analysis: accountId ? null : analysis });
-      }
-    }).catch(() => setAccounts([]));
+    void api.accounts().then(setAccounts).catch(() => setAccounts([]));
   }, [api]);
 
+  useEffect(() => {
+    const platformChanged = previousAccountPlatform.current !== accountPlatform;
+    previousAccountPlatform.current = accountPlatform;
+    if (!accountPlatform) {
+      if (platformChanged) {
+        analysisVersion.current += 1;
+        update({ accountId: null, analysis: null });
+      }
+      return;
+    }
+    if (!accounts.length) {
+      if (platformChanged) {
+        analysisVersion.current += 1;
+        update({ analysis: null });
+      }
+      return;
+    }
+    if (!platformChanged && initializedAccountPlatforms.current.has(accountPlatform)) return;
+    initializedAccountPlatforms.current.add(accountPlatform);
+    const currentAccount = platformAccounts.find((item) => item.id === accountId && accountCanDownload(item));
+    const defaultAccount = platformAccounts.find((item) => item.is_default && accountCanDownload(item));
+    analysisVersion.current += 1;
+    update({ accountId: currentAccount?.id || defaultAccount?.id || null, analysis: null });
+  }, [accountPlatform, accounts]);
+
   async function analyze(accountOverride: string | null = effectiveAccountId) {
+    const requestVersion = ++analysisVersion.current;
+    const analyzedUrl = url.trim();
+    const nextAccountId = accountPlatform ? accountOverride : null;
+    update({ analysis: null, accountId: nextAccountId, selectedFormat: null, selectedPlaylistIndexes: [] });
     setBusy(true);
     setError(null);
     try {
-      const nextAccountId = isBilibiliUrl ? accountOverride : null;
-      const data = await api.analyze(url.trim(), true, nextAccountId);
+      const data = await api.analyze(analyzedUrl, true, nextAccountId);
+      if (requestVersion !== analysisVersion.current) return;
       update({
-        url: url.trim(),
+        url: analyzedUrl,
         analysis: data,
         accountId: nextAccountId,
         selectedFormat: preferredFormatForMode(data.formats, mode, settings?.default_video_resolution || 'best'),
@@ -105,9 +174,9 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
         selectedSubtitleLangs: [],
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (requestVersion === analysisVersion.current) setError(errorText(err, t, 'analysis', accountPlatform));
     } finally {
-      setBusy(false);
+      if (requestVersion === analysisVersion.current) setBusy(false);
     }
   }
 
@@ -119,7 +188,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
 
   function buildRequest(): CreateTaskRequest {
     return {
-      url,
+      url: analysis ? rawText(analysis, 'resolved_single_video_url') || url : url,
       mode,
       format_id: selectedFormat,
       output_format: videoOutputFormat,
@@ -133,6 +202,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
       proxy_url: proxyUrl.trim() || null,
       concurrent_fragments: concurrentFragments,
       account_id: effectiveAccountId,
+      douyin_download_proof: analysis?.douyin_download_proof || null,
       playlist_items: playlistItemsValue(selectedPlaylistIndexes, analysis?.playlist_count),
       playlist_title: analysis?.is_playlist ? rawText(analysis, 'collection_title') || analysis.title || null : null,
       playlist_entries: selectedPlaylistEntries(analysis, selectedPlaylistIndexes),
@@ -141,14 +211,21 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
   }
 
   async function createTask() {
-    if (!analysis) return;
+    if (!analysis || creatingTask.current) return;
+    creatingTask.current = true;
     setBusy(true);
     setError(null);
     try {
-      onTask(await api.createTask(buildRequest()));
+      const task = await api.createTask(buildRequest());
+      update({ analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] });
+      onTask(task);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && err.code && proofErrorCodes.has(err.code)) {
+        update({ analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] });
+      }
+      setError(errorText(err, t, 'task', accountPlatform));
     } finally {
+      creatingTask.current = false;
       setBusy(false);
     }
   }
@@ -168,7 +245,9 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
   }
 
   function setUrl(value: string) {
+    analysisVersion.current += 1;
     update({ url: value, analysis: null, selectedFormat: null, selectedPlaylistIndexes: [] });
+    setBusy(false);
     setError(null);
   }
 
@@ -180,6 +259,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
         <button type="submit" className="primary analyze-button" disabled={!url.trim() || busy}>{busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}{busy ? t('working') : t('analyze')}</button>
       </form>
       {error && <p className="download-error">{error}</p>}
+      {!analysis && accountPlatform && !!platformAccounts.length && <label className="workspace-account-select">{t('downloadAccount')}<select value={effectiveAccountId || ''} disabled={busy} onChange={(event) => update({ accountId: event.target.value || null, analysis: null })}><option value="">{t('anonymousAccount')}</option>{platformAccounts.map((account) => <option key={account.id} value={account.id} disabled={!accountCanDownload(account)}>{account.label} · {account.display_name || account.external_id || t('unverifiedAccount')}</option>)}</select></label>}
     </section>
 
     {!analysis ? <section className="download-empty"><div className="download-empty-mark"><Download aria-hidden="true" /></div><div><h2>{t('downloadEmptyTitle')}</h2><p>{t('analyzeEmpty')}</p></div><div className="download-empty-modes"><span>{t('modeVideo')}</span><span>{t('modeAudio')}</span><span>{t('modeSubtitles')}</span><span>{t('playlist')}</span></div></section> : <div className="download-layout">
@@ -192,7 +272,7 @@ export function WorkspacePage({ api, t, settings, state, onState, onTask }: Work
         <header><div><span>{t('downloadPlan')}</span><h2>{analysis.is_playlist ? t('playlistDownload') : t('singleDownload')}</h2></div>{analysis.is_playlist ? <ListVideo aria-hidden="true" /> : <Download aria-hidden="true" />}</header>
         <div className="download-mode segmented">{(['video', 'audio', 'subtitles'] as DownloadMode[]).map((item) => <button key={item} className={mode === item ? 'active' : ''} onClick={() => update({ mode: item })}>{modeLabel(item, t)}</button>)}</div>
 
-        {isBilibiliUrl && !!accounts.length && <label className="workspace-account-select">{t('downloadAccount')}<select value={accountId || ''} disabled={busy} onChange={(event) => void analyze(event.target.value || null)}><option value="">{t('anonymousAccount')}</option>{accounts.map((account) => <option key={account.id} value={account.id} disabled={account.state !== 'valid'}>{account.label} · {account.display_name || account.external_id || t('unverifiedAccount')}</option>)}</select></label>}
+        {accountPlatform && !!platformAccounts.length && <label className="workspace-account-select">{t('downloadAccount')}<select value={effectiveAccountId || ''} disabled={busy} onChange={(event) => void analyze(event.target.value || null)}><option value="">{t('anonymousAccount')}</option>{platformAccounts.map((account) => <option key={account.id} value={account.id} disabled={!accountCanDownload(account)}>{account.label} · {account.display_name || account.external_id || t('unverifiedAccount')}</option>)}</select></label>}
 
         <div className="plan-section">
           <div className="plan-heading"><span>{t('qualityAndFormat')}</span>{selectedFormat && <span className="badge blue">{t('manualFormatSelection')}</span>}</div>

@@ -10,6 +10,7 @@ from ..config import ServerConfig
 from ..models import CreateTaskRequest, HistoryListResponse, TaskResponse
 from ..providers.bilibili import BilibiliProviderError
 from ..services.auth import require_websocket_auth
+from ..services.douyin_proofs import DouyinProofError
 from ..services.settings import filename_template
 from ..services.storage import Storage
 from ..services.task_manager import TaskManager
@@ -31,6 +32,8 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
             raise HTTPException(status_code=404, detail="Account not found") from exc
         except BilibiliProviderError as exc:
             raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+        except DouyinProofError as exc:
+            raise HTTPException(status_code=424, detail={"code": exc.code, "message": str(exc)}) from exc
         except ValueError as exc:
             raise HTTPException(status_code=424, detail=str(exc)) from exc
 
@@ -67,6 +70,8 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
             return await manager.restart_task(task_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Task not found") from exc
+        except DouyinProofError as exc:
+            raise HTTPException(status_code=424, detail={"code": exc.code, "message": str(exc)}) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -139,7 +144,10 @@ def create_tasks_router(config: ServerConfig, storage: Storage, manager: TaskMan
         options = dict(original.options)
         if entry.url:
             options["url"] = entry.url
-        return await manager.create_task(CreateTaskRequest(**options))
+        try:
+            return await manager.create_task(CreateTaskRequest(**options))
+        except DouyinProofError as exc:
+            raise HTTPException(status_code=424, detail={"code": exc.code, "message": str(exc)}) from exc
 
     @router.delete("/history/{history_id}", status_code=204, dependencies=auth)
     def delete_history(history_id: str) -> Response:

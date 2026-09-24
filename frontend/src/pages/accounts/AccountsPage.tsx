@@ -1,19 +1,29 @@
-import { CheckCircle2, ChevronLeft, Download, ExternalLink, FolderHeart, KeyRound, LoaderCircle, Pencil, Plus, QrCode, Radar, RefreshCw, ShieldCheck, Star, Trash2, Upload, UserRound } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, Download, ExternalLink, FolderHeart, KeyRound, LoaderCircle, Pencil, Plus, QrCode, Radar, RefreshCw, ShieldCheck, Sparkles, Star, Trash2, Upload, UserRound } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useRef, useState } from 'react';
-import type { ApiClient } from '../../api/client';
-import type { AccountResource, AccountResourceEntriesResponse, AccountResourceType, PlatformAccount, TaskResponse } from '../../api/types';
+import { ApiError, type ApiClient } from '../../api/client';
+import type { AccountResource, AccountResourceEntriesResponse, AccountResourceType, HealthResponse, Platform, PlatformAccount, TaskResponse } from '../../api/types';
 import type { T, TKey } from '../../i18n';
 
 interface AccountsPageProps {
   api: ApiClient;
+  health: HealthResponse | null;
   t: T;
+  onAnalyze: (url: string, accountId: string) => void;
   onTask: (task: TaskResponse) => void;
 }
 
-type ResourceKind = Extract<AccountResourceType, 'created_favorite' | 'collected_favorite' | 'collection' | 'watch_later'>;
-const resourceKinds: ResourceKind[] = ['created_favorite', 'collected_favorite', 'collection', 'watch_later'];
-const pageSize = 20;
+type BilibiliResourceKind = Extract<AccountResourceType, 'created_favorite' | 'collected_favorite' | 'collection' | 'watch_later'>;
+type DouyinResourceKind = Extract<AccountResourceType, 'douyin_works' | 'douyin_favorites' | 'douyin_collections'>;
+type ResourceKind = BilibiliResourceKind | DouyinResourceKind;
+const bilibiliResourceKinds: BilibiliResourceKind[] = ['created_favorite', 'collected_favorite', 'collection', 'watch_later'];
+const douyinResourceKinds: DouyinResourceKind[] = ['douyin_works', 'douyin_favorites', 'douyin_collections'];
+const bilibiliPageSize = 20;
+const douyinPageSize = 10;
+
+function pageSizeForPlatform(platform: Platform): number {
+  return platform === 'douyin' ? douyinPageSize : bilibiliPageSize;
+}
 
 function stateClass(account: PlatformAccount): string {
   return account.state === 'valid' ? 'valid' : account.state === 'unknown' ? 'warning' : 'error';
@@ -26,8 +36,32 @@ function accountStateKey(account: PlatformAccount): TKey {
   return 'accountInvalid';
 }
 
+function platformName(platform: Platform, t: T): string {
+  return t(platform === 'bilibili' ? 'platformBilibili' : 'platformDouyin');
+}
+
 function isEntryDownloadable(entry: AccountResourceEntriesResponse['entries'][number]): boolean {
   return entry.is_available !== false && Boolean(entry.id && entry.url);
+}
+
+function canonicalEntryUrl(entry: AccountResourceEntriesResponse['entries'][number]): string | null {
+  return entry.webpage_url || entry.url || null;
+}
+
+const douyinResourceErrorKeys = {
+  provider_risk_control: 'douyinResourceRiskControl',
+  provider_timeout: 'douyinResourceTimeout',
+  provider_unavailable: 'douyinResourceUnavailable',
+  provider_response_invalid: 'douyinResourceInvalidResponse',
+  account_login_invalid: 'douyinResourceLoginInvalid',
+} as const satisfies Partial<Record<string, TKey>>;
+
+function resourceErrorText(error: unknown, t: T, platform: Platform): string {
+  if (platform === 'douyin' && error instanceof ApiError && error.code) {
+    const key = douyinResourceErrorKeys[error.code as keyof typeof douyinResourceErrorKeys];
+    if (key) return t(key);
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function entryTypeLabel(entry: AccountResourceEntriesResponse['entries'][number], t: T): string {
@@ -57,7 +91,7 @@ function ResourceCover({ accountId, resource, api }: { accountId: string; resour
   </span>;
 }
 
-export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
+export function AccountsPage({ api, health, t, onAnalyze, onTask }: AccountsPageProps) {
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [kind, setKind] = useState<ResourceKind>('created_favorite');
@@ -68,6 +102,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
   const [entryOffset, setEntryOffset] = useState(0);
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const [adding, setAdding] = useState(false);
+  const [addPlatform, setAddPlatform] = useState<Platform>('bilibili');
   const [label, setLabel] = useState('');
   const [cookieContent, setCookieContent] = useState('');
   const [makeDefault, setMakeDefault] = useState(false);
@@ -98,16 +133,21 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     setError(null);
     setNotice(null);
     try {
-      const result = await api.accountResources(accountId, nextKind, offset, pageSize);
+      const resourceAccount = accounts.find((item) => item.id === accountId);
+      const result = await api.accountResources(accountId, nextKind, offset, pageSizeForPlatform(resourceAccount?.platform || 'bilibili'));
       if (requestId !== resourceRequest.current) return;
       setResources(result.items);
       setResourceTotal(result.page.total);
       setResourceOffset(offset);
       setOpened(null);
       setSelectedEntryIds([]);
+      if (resourceAccount?.platform === 'douyin' && nextKind !== 'douyin_collections' && result.items[0]) {
+        await openResource(result.items[0], 0);
+      }
     } catch (err) {
       if (requestId === resourceRequest.current) {
-        setError(err instanceof Error ? err.message : String(err));
+        const platform = accounts.find((item) => item.id === accountId)?.platform || 'bilibili';
+        setError(resourceErrorText(err, t, platform));
         setResources([]);
         setResourceTotal(0);
         try { await loadAccounts(accountId); } catch { /* Keep the resource error visible. */ }
@@ -123,7 +163,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     setError(null);
     setNotice(null);
     try {
-      const result = await api.accountResourceEntries(resource.account_id, resource.id, offset, pageSize, resource.item_count);
+      const result = await api.accountResourceEntries(resource.account_id, resource.id, offset, pageSizeForPlatform(resource.platform), resource.item_count);
       if (requestId !== entryRequest.current) return;
       const total = Math.max(result.page.total, result.resource.item_count ?? 0, resource.item_count ?? 0);
       setOpened({
@@ -140,7 +180,8 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
       setSelectedEntryIds([]);
     } catch (err) {
       if (requestId === entryRequest.current) {
-        setError(err instanceof Error ? err.message : String(err));
+        const platform = accounts.find((item) => item.id === resource.account_id)?.platform || resource.platform;
+        setError(resourceErrorText(err, t, platform));
         try { await loadAccounts(resource.account_id); } catch { /* Keep the entry error visible. */ }
       }
     } finally {
@@ -158,8 +199,8 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     setNotice(null);
   }, [selectedId]);
   useEffect(() => {
-    if (!selectedId) return;
-    if (selected?.state === 'invalid' || selected?.state === 'expired') {
+    if (!selectedId || !selected) return;
+    if (selected.state === 'invalid' || selected.state === 'expired') {
       resourceRequest.current += 1;
       entryRequest.current += 1;
       setResources([]);
@@ -170,8 +211,21 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
       setBusy(false);
       return;
     }
-    void loadResources(selectedId, kind, 0);
-  }, [selectedId, selected?.state]);
+    if (selected.platform === 'douyin' && health?.douyin_browser_available !== true) {
+      resourceRequest.current += 1;
+      entryRequest.current += 1;
+      setResources([]);
+      setResourceTotal(0);
+      setOpened(null);
+      setSelectedEntryIds([]);
+      setError(null);
+      setBusy(false);
+      return;
+    }
+    const nextKind: ResourceKind = selected.platform === 'douyin' ? 'douyin_works' : 'created_favorite';
+    setKind(nextKind);
+    void loadResources(selectedId, nextKind, 0);
+  }, [selectedId, selected?.state, selected?.platform, health?.douyin_browser_available]);
 
   async function startQrLogin() {
     const targetAccount = qrTargetAccountId ? accounts.find((account) => account.id === qrTargetAccountId) : null;
@@ -222,7 +276,7 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
     setBusy(true);
     setError(null);
     try {
-      const account = await api.createAccount({ platform: 'bilibili', label: label.trim(), cookie_content: cookieContent, make_default: makeDefault });
+      const account = await api.createAccount({ platform: addPlatform, label: label.trim(), cookie_content: cookieContent, make_default: makeDefault });
       setAdding(false);
       setLabel('');
       setCookieContent('');
@@ -319,8 +373,10 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
   }
 
   function chooseKind(nextKind: ResourceKind) {
-    if (!selectedId) return;
+    if (!selectedId || !selected) return;
     setKind(nextKind);
+    if (selected.state === 'invalid' || selected.state === 'expired') return;
+    if (selected.platform === 'douyin' && health?.douyin_browser_available !== true) return;
     void loadResources(selectedId, nextKind, 0);
   }
 
@@ -330,23 +386,33 @@ export function AccountsPage({ api, t, onTask }: AccountsPageProps) {
 
   return <div className="accounts-console">
     <aside className={`account-master ${opened || adding ? 'mobile-hidden' : ''}`}>
-      <header><div><span>{t('bilibiliAccounts')}</span><strong>{accounts.length}</strong></div><button className="icon-button" onClick={() => { setQrTargetAccountId(null); setAdding(true); }} title={t('addAccount')}><Plus aria-hidden="true" /></button></header>
-      <div className="account-list">{accounts.map((account) => <button key={account.id} className={`account-list-item ${account.id === selectedId ? 'active' : ''}`} onClick={() => setSelectedId(account.id)}><AccountAvatar account={account} api={api} /><span><strong>{account.label}</strong><small>{account.display_name || account.external_id || t('unverifiedAccount')}</small></span><span className={`account-state-label ${stateClass(account)}`}><span aria-hidden="true" />{t(accountStateKey(account))}</span></button>)}</div>
-      {!accounts.length && <div className="account-empty"><UserRound aria-hidden="true" /><strong>{t('noAccounts')}</strong><button className="primary" onClick={() => { setQrTargetAccountId(null); setAdding(true); }}><Plus aria-hidden="true" />{t('addAccount')}</button></div>}
+      <header><div><span>{t('platformAccounts')}</span><strong>{accounts.length}</strong></div><button className="icon-button" onClick={() => { setQrTargetAccountId(null); setError(null); setNotice(null); setAdding(true); }} title={t('addAccount')}><Plus aria-hidden="true" /></button></header>
+      <div className="account-list">{accounts.map((account) => <button key={account.id} className={`account-list-item ${account.id === selectedId ? 'active' : ''}`} onClick={() => setSelectedId(account.id)}><AccountAvatar account={account} api={api} /><span><strong>{account.label}</strong><small>{platformName(account.platform, t)} · {account.display_name || account.external_id || t('unverifiedAccount')}</small></span><span className={`account-state-label ${stateClass(account)}`}><span aria-hidden="true" />{t(accountStateKey(account))}</span></button>)}</div>
+      {!accounts.length && <div className="account-empty"><UserRound aria-hidden="true" /><strong>{t('noAccounts')}</strong><button className="primary" onClick={() => { setQrTargetAccountId(null); setError(null); setNotice(null); setAdding(true); }}><Plus aria-hidden="true" />{t('addAccount')}</button></div>}
     </aside>
 
     <main className="account-detail">
       {error && <p className="account-error">{error}</p>}
       {notice && <p className="account-notice"><CheckCircle2 aria-hidden="true" />{notice}</p>}
-      {adding && <section className="account-add-form"><header><div><h2>{t('addBilibiliAccount')}</h2><p>{t('accountLoginMethodHint')}</p></div><button onClick={() => { setAdding(false); setQrChallenge(null); setQrStatus(null); }}>{t('cancel')}</button></header><div><label>{t('accountLabel')}<input value={label} onChange={(event) => setLabel(event.target.value)} /></label><div className="account-add-methods"><button className={addMethod === 'qr' ? 'active' : ''} onClick={() => setAddMethod('qr')}><QrCode />{t('qrLogin')}</button><button className={addMethod === 'cookie' ? 'active' : ''} onClick={() => { setAddMethod('cookie'); setQrChallenge(null); }}><Upload />{t('cookieImport')}</button></div>{addMethod === 'qr' ? qrLoginPanel() : <><label>{t('cookieData')}<textarea value={cookieContent} onChange={(event) => setCookieContent(event.target.value)} placeholder={t('cookiePastePlaceholder')} /></label><label className="file-button"><input type="file" accept=".txt,.cookies,.json" onChange={(event) => event.target.files?.[0]?.text().then(setCookieContent)} /><Upload aria-hidden="true" />{t('chooseCookieFile')}</label></>}<label className="check"><input type="checkbox" checked={makeDefault} onChange={(event) => setMakeDefault(event.target.checked)} />{t('setDefaultAccount')}</label></div>{addMethod === 'cookie' && <footer><button className="primary" disabled={busy || !label.trim() || !cookieContent.trim()} onClick={() => void createAccount()}>{busy ? <LoaderCircle className="spin" /> : <ShieldCheck />}{t('verifyAndAdd')}</button></footer>}</section>}
+      {adding && <section className="account-add-form"><header><div><h2>{t('addPlatformAccount')}</h2><p>{t(addPlatform === 'bilibili' ? 'accountLoginMethodHint' : 'douyinCookieImportHint')}</p></div><button onClick={() => { setAdding(false); setQrChallenge(null); setQrStatus(null); }}>{t('cancel')}</button></header><div><div className="account-add-methods"><button className={addPlatform === 'bilibili' ? 'active' : ''} onClick={() => { setAddPlatform('bilibili'); setAddMethod('qr'); }}>{t('platformBilibili')}</button><button className={addPlatform === 'douyin' ? 'active' : ''} onClick={() => { setAddPlatform('douyin'); setAddMethod('cookie'); setQrChallenge(null); }}>{t('platformDouyin')}</button></div><label>{t('accountLabel')}<input value={label} onChange={(event) => setLabel(event.target.value)} /></label>{addPlatform === 'bilibili' && <div className="account-add-methods"><button className={addMethod === 'qr' ? 'active' : ''} onClick={() => setAddMethod('qr')}><QrCode />{t('qrLogin')}</button><button className={addMethod === 'cookie' ? 'active' : ''} onClick={() => { setAddMethod('cookie'); setQrChallenge(null); }}><Upload />{t('cookieImport')}</button></div>}{addPlatform === 'bilibili' && addMethod === 'qr' ? qrLoginPanel() : <><label>{t('cookieData')}<textarea value={cookieContent} onChange={(event) => setCookieContent(event.target.value)} placeholder={t('cookiePastePlaceholder')} /></label><label className="file-button"><input type="file" accept=".txt,.cookies,.json" onChange={(event) => event.target.files?.[0]?.text().then(setCookieContent)} /><Upload aria-hidden="true" />{t('chooseCookieFile')}</label></>}<label className="check"><input type="checkbox" checked={makeDefault} onChange={(event) => setMakeDefault(event.target.checked)} />{t('setDefaultAccount')}</label></div>{(addPlatform === 'douyin' || addMethod === 'cookie') && <footer><button className="primary" disabled={busy || !label.trim() || !cookieContent.trim()} onClick={() => void createAccount()}>{busy ? <LoaderCircle className="spin" /> : <ShieldCheck />}{t('verifyAndAdd')}</button></footer>}</section>}
 
       {!adding && selected && <>
-        <section className="account-identity"><AccountAvatar account={selected} api={api} large /><div><span>{selected.label}{selected.is_default && <small className="badge blue">{t('defaultAccount')}</small>}<small className={`account-state-label ${stateClass(selected)}`}><span aria-hidden="true" />{t(accountStateKey(selected))}</small><small className={`badge ${selected.auto_refresh ? 'blue' : ''}`}>{t(selected.auto_refresh ? 'autoRenewEnabled' : 'manualCookieAccount')}</small></span><h2>{selected.display_name || t('unverifiedAccount')}</h2><p>UID {selected.external_id || '-'} · {selected.vip_type ? t('premiumAccount') : t('standardAccount')}{selected.last_refresh_at ? ` · ${t('lastRenewed')} ${new Date(selected.last_refresh_at).toLocaleString()}` : ''}</p>{selected.last_refresh_error && <p className="account-refresh-error">{selected.last_refresh_error}</p>}</div><div className="account-actions"><button onClick={() => void accountAction(() => api.verifyAccount(selected.id))}><RefreshCw />{t('verifyAccount')}</button><button onClick={() => { setReplacingCookies(false); setQrChallenge(null); setQrStatus(null); setQrTargetAccountId((current) => current === selected.id ? null : selected.id); }}><QrCode />{t('qrRelogin')}</button>{selected.auto_refresh && <button onClick={() => void refreshAccount()}><KeyRound />{t('renewNow')}</button>}<button onClick={() => { const next = window.prompt(t('accountLabel'), selected.label); if (next?.trim() && next.trim() !== selected.label) void accountAction(() => api.updateAccount(selected.id, { label: next.trim() })); }}><Pencil />{t('renameAccount')}</button><button onClick={() => setReplacingCookies((value) => !value)}><Upload />{t('replaceAccountCookies')}</button>{!selected.is_default && <button onClick={() => void accountAction(() => api.setDefaultAccount(selected.id))}><Star />{t('setDefaultAccount')}</button>}<button className="danger" onClick={() => { if (window.confirm(t('deleteAccountConfirm'))) void accountAction(() => api.deleteAccount(selected.id).then(() => { setSelectedId(null); })); }}><Trash2 />{t('deleteAccount')}</button></div></section>
-        {qrTargetAccountId === selected.id && <section className="account-relogin"><header><div><h3>{t('qrReloginTitle')}</h3><p>{t('qrReloginHint')}</p></div><button onClick={() => { setQrTargetAccountId(null); setQrChallenge(null); setQrStatus(null); }}>{t('cancel')}</button></header>{qrLoginPanel()}</section>}
+        <section className="account-identity"><AccountAvatar account={selected} api={api} large /><div><span>{selected.label}{selected.is_default && <small className="badge blue">{t('defaultAccount')}</small>}<small className="badge">{platformName(selected.platform, t)}</small><small className={`account-state-label ${stateClass(selected)}`}><span aria-hidden="true" />{t(accountStateKey(selected))}</small><small className={`badge ${selected.auto_refresh ? 'blue' : ''}`}>{t(selected.auto_refresh ? 'autoRenewEnabled' : 'manualCookieAccount')}</small></span><h2>{selected.display_name || t('unverifiedAccount')}</h2><p>ID {selected.external_id || '-'}{selected.platform === 'bilibili' ? ` · ${selected.vip_type ? t('premiumAccount') : t('standardAccount')}` : ''}{selected.last_refresh_at ? ` · ${t('lastRenewed')} ${new Date(selected.last_refresh_at).toLocaleString()}` : ''}</p>{selected.last_error && <p className={selected.state === 'invalid' || selected.state === 'expired' ? 'account-refresh-error' : 'account-verification-note'}>{selected.last_error}</p>}{selected.last_refresh_error && <p className="account-refresh-error">{selected.last_refresh_error}</p>}</div><div className="account-actions"><button onClick={() => void accountAction(() => api.verifyAccount(selected.id))}><RefreshCw />{t('verifyAccount')}</button>{selected.platform === 'bilibili' && <button onClick={() => { setReplacingCookies(false); setQrChallenge(null); setQrStatus(null); setQrTargetAccountId((current) => current === selected.id ? null : selected.id); }}><QrCode />{t('qrRelogin')}</button>}{selected.auto_refresh && <button onClick={() => void refreshAccount()}><KeyRound />{t('renewNow')}</button>}<button onClick={() => { const next = window.prompt(t('accountLabel'), selected.label); if (next?.trim() && next.trim() !== selected.label) void accountAction(() => api.updateAccount(selected.id, { label: next.trim() })); }}><Pencil />{t('renameAccount')}</button><button onClick={() => setReplacingCookies((value) => !value)}><Upload />{t('replaceAccountCookies')}</button>{!selected.is_default && <button onClick={() => void accountAction(() => api.setDefaultAccount(selected.id))}><Star />{t('setDefaultAccount')}</button>}<button className="danger" onClick={() => { if (window.confirm(t('deleteAccountConfirm'))) void accountAction(() => api.deleteAccount(selected.id).then(() => { setSelectedId(null); })); }}><Trash2 />{t('deleteAccount')}</button></div></section>
+        {selected.platform === 'bilibili' && qrTargetAccountId === selected.id && <section className="account-relogin"><header><div><h3>{t('qrReloginTitle')}</h3><p>{t('qrReloginHint')}</p></div><button onClick={() => { setQrTargetAccountId(null); setQrChallenge(null); setQrStatus(null); }}>{t('cancel')}</button></header>{qrLoginPanel()}</section>}
         {replacingCookies && <section className="account-cookie-editor"><header><div><h3>{t('replaceAccountCookies')}</h3><p>{t('accountCookieHint')}</p></div><button onClick={() => { setReplacingCookies(false); setReplacementCookieContent(''); }}>{t('cancel')}</button></header><label>{t('cookieData')}<textarea autoFocus value={replacementCookieContent} onChange={(event) => setReplacementCookieContent(event.target.value)} placeholder={t('cookiePastePlaceholder')} /></label><footer><label className="file-button"><input type="file" accept=".txt,.cookies,.json" onChange={(event) => event.target.files?.[0]?.text().then(setReplacementCookieContent)} /><Upload aria-hidden="true" />{t('chooseCookieFile')}</label><button className="primary" disabled={busy || !replacementCookieContent.trim()} onClick={() => void replaceAccountCookies()}>{busy ? <LoaderCircle className="spin" /> : <ShieldCheck />}{t('saveAndVerifyCookies')}</button></footer></section>}
-        <nav className="account-resource-tabs">{resourceKinds.map((item) => <button key={item} className={kind === item ? 'active' : ''} onClick={() => chooseKind(item)}>{t(item === 'created_favorite' ? 'createdFavorites' : item === 'collected_favorite' ? 'collectedFavorites' : item === 'collection' ? 'accountCollections' : 'watchLater')}</button>)}</nav>
-        {!opened ? <section className="account-resources"><div className="account-resource-list">{busy && <div className="account-loading"><LoaderCircle className="spin" />{t('working')}</div>}{!busy && resources.map((resource) => <button key={resource.id} className="account-resource-row" onClick={() => void openResource(resource)}><ResourceCover accountId={selected.id} resource={resource} api={api} /><span><strong>{resource.title}</strong><small>{resource.owner_name || selected.display_name} · {resource.item_count ?? 0} {t('playlistItems')}</small></span>{resource.is_private && <span className="badge">{t('privateResource')}</span>}<ChevronLeft className="resource-chevron" /></button>)}{!busy && !resources.length && <div className="account-empty"><FolderHeart /><strong>{t('noResources')}</strong></div>}</div><div className="account-pagination"><button disabled={resourceOffset === 0 || busy} onClick={() => void loadResources(selected.id, kind, Math.max(0, resourceOffset - pageSize))}>{t('previousPage')}</button><span>{resourceTotal ? `${resourceOffset + 1}-${Math.min(resourceOffset + pageSize, resourceTotal)} / ${resourceTotal}` : '0 / 0'}</span><button disabled={resourceOffset + pageSize >= resourceTotal || busy} onClick={() => void loadResources(selected.id, kind, resourceOffset + pageSize)}>{t('nextPage')}</button></div></section>
-        : <section className="account-entries"><header><button className="icon-button" onClick={() => { setOpened(null); setSelectedEntryIds([]); }} title={t('back')}><ChevronLeft /></button><div><h2>{opened.resource.title}</h2><p>{opened.page.total} {t('playlistItems')}</p></div><a className="icon-button" href={opened.resource.source_url} target="_blank" rel="noreferrer" title={t('sourcePage')}><ExternalLink /></a></header><div className="account-entry-toolbar"><label className="check"><input type="checkbox" checked={opened.entries.some(isEntryDownloadable) && opened.entries.filter(isEntryDownloadable).every((entry) => selectedEntryIds.includes(entry.id!))} onChange={(event) => setSelectedEntryIds(event.target.checked ? opened.entries.filter(isEntryDownloadable).map((entry) => entry.id!) : [])} />{t('selectCurrentPage')}</label><span><button disabled={busy} onClick={() => void downloadAndMonitor()}><Radar />{t('createMonitor')}</button><button className="primary" disabled={!selectedEntryIds.length || busy} onClick={() => void downloadSelected()}><Download />{t('downloadSelected')} ({selectedEntryIds.length})</button></span></div><div className="account-entry-list">{opened.entries.map((entry) => { const downloadable = isEntryDownloadable(entry); return <label key={`${entry.index}-${entry.id}`} className={downloadable ? '' : 'unavailable'}><input type="checkbox" disabled={!downloadable} checked={Boolean(downloadable && entry.id && selectedEntryIds.includes(entry.id))} onChange={() => downloadable && entry.id && setSelectedEntryIds((current) => current.includes(entry.id!) ? current.filter((id) => id !== entry.id) : [...current, entry.id!])} /><span>{entry.index}</span><span><span className="account-entry-title"><strong>{entry.title || entry.id}</strong><small className={`badge ${entry.entry_type === 'favorite_collection' || entry.entry_type === 'multipart_video' ? 'blue' : ''}`}>{entryTypeLabel(entry, t)}</small>{!downloadable && <small className="badge red">{t(entry.entry_type === 'audio' ? 'unsupportedFavoriteItem' : 'videoUnavailable')}</small>}</span><small>{entry.channel || '-'}{entry.duration ? ` · ${Math.round(entry.duration / 60)} ${t('minutes')}` : ''}</small></span></label>; })}</div><div className="account-pagination"><button disabled={entryOffset === 0 || busy} onClick={() => void openResource(opened.resource, Math.max(0, entryOffset - pageSize))}>{t('previousPage')}</button><span>{entryOffset + 1}-{Math.min(entryOffset + pageSize, opened.page.total)} / {opened.page.total}</span><button disabled={!opened.page.has_more || busy} onClick={() => void openResource(opened.resource, entryOffset + pageSize)}>{t('nextPage')}</button></div></section>}
+        {selected.platform === 'douyin' && <>
+          <nav className="account-resource-tabs compact-resource-tabs">{douyinResourceKinds.map((item) => <button key={item} className={kind === item ? 'active' : ''} onClick={() => chooseKind(item)}>{t(item === 'douyin_works' ? 'douyinWorks' : item === 'douyin_favorites' ? 'douyinFavorites' : 'douyinCollections')}</button>)}</nav>
+          {health?.douyin_browser_available === false
+            ? <section className="account-resources"><div className="account-runtime-status"><AlertTriangle aria-hidden="true" /><div><strong>{t('douyinBrowserUnavailableTitle')}</strong><p>{t('douyinBrowserUnavailableHint')}</p></div></div></section>
+            : health?.douyin_browser_available == null
+              ? <section className="account-resources"><div className="account-loading"><LoaderCircle className="spin" />{t('checkingBrowserRuntime')}</div></section>
+              : !opened
+              ? <section className="account-resources"><div className="account-resource-list">{busy && <div className="account-loading"><LoaderCircle className="spin" />{t('working')}</div>}{!busy && resources.map((resource) => <button key={resource.id} className="account-resource-row" onClick={() => void openResource(resource)}><ResourceCover accountId={selected.id} resource={resource} api={api} /><span><strong>{resource.title}</strong><small>{resource.item_count == null ? t('openResource') : `${resource.item_count} ${t('playlistItems')}`}</small></span><ChevronLeft className="resource-chevron" /></button>)}{!busy && !resources.length && <div className="account-empty"><FolderHeart /><strong>{t('noResources')}</strong></div>}</div>{kind === 'douyin_collections' && <div className="account-pagination"><button disabled={resourceOffset === 0 || busy} onClick={() => void loadResources(selected.id, kind, Math.max(0, resourceOffset - douyinPageSize))}>{t('previousPage')}</button><span>{resourceTotal ? `${resourceOffset + 1}-${Math.min(resourceOffset + douyinPageSize, resourceTotal)} / ${resourceTotal}` : '0 / 0'}</span><button disabled={resourceOffset + douyinPageSize >= resourceTotal || busy} onClick={() => void loadResources(selected.id, kind, resourceOffset + douyinPageSize)}>{t('nextPage')}</button></div>}</section>
+              : <section className="account-entries douyin-entries"><header><button className="icon-button" onClick={() => { setOpened(null); setSelectedEntryIds([]); }} title={t('back')}><ChevronLeft /></button><div><h2>{opened.resource.title}</h2><p>{opened.page.total} {t('playlistItems')}</p></div><a className="icon-button" href={opened.resource.source_url} target="_blank" rel="noreferrer" title={t('sourcePage')}><ExternalLink /></a></header><div className="account-entry-list">{busy && <div className="account-loading"><LoaderCircle className="spin" />{t('working')}</div>}{!busy && opened.entries.map((entry) => { const entryUrl = canonicalEntryUrl(entry); const available = entry.is_available !== false && Boolean(entryUrl); return <div key={`${entry.index}-${entry.id || entryUrl || 'unavailable'}`} className={`douyin-entry-row${available ? '' : ' unavailable'}`}><span className="douyin-entry-index">{entry.index}</span><div><strong>{entry.title || t('untitledVideo')}</strong><small>{entry.channel || t('unknownCreator')}{entry.duration ? ` · ${Math.round(entry.duration / 60)} ${t('minutes')}` : ''}</small>{!available && <small className="douyin-unavailable-reason">{entry.unavailable_reason || t('videoUnavailable')}</small>}</div><button className="primary" disabled={!available} onClick={() => entryUrl && onAnalyze(entryUrl, selected.id)}><Sparkles aria-hidden="true" />{t('analyzeAndDownload')}</button></div>; })}{!busy && !opened.entries.length && <div className="account-empty"><FolderHeart /><strong>{t('noResources')}</strong></div>}</div><div className="account-pagination"><button disabled={entryOffset === 0 || busy} onClick={() => void openResource(opened.resource, Math.max(0, entryOffset - douyinPageSize))}>{t('previousPage')}</button><span>{opened.page.total ? `${entryOffset + 1}-${Math.min(entryOffset + opened.entries.length, opened.page.total)} / ${opened.page.total}` : '0 / 0'}</span><button disabled={!opened.page.has_more || busy} onClick={() => void openResource(opened.resource, entryOffset + douyinPageSize)}>{t('nextPage')}</button></div></section>}
+        </>}
+        {selected.platform === 'bilibili' && <><nav className="account-resource-tabs">{bilibiliResourceKinds.map((item) => <button key={item} className={kind === item ? 'active' : ''} onClick={() => chooseKind(item)}>{t(item === 'created_favorite' ? 'createdFavorites' : item === 'collected_favorite' ? 'collectedFavorites' : item === 'collection' ? 'accountCollections' : 'watchLater')}</button>)}</nav>
+        {!opened ? <section className="account-resources"><div className="account-resource-list">{busy && <div className="account-loading"><LoaderCircle className="spin" />{t('working')}</div>}{!busy && resources.map((resource) => <button key={resource.id} className="account-resource-row" onClick={() => void openResource(resource)}><ResourceCover accountId={selected.id} resource={resource} api={api} /><span><strong>{resource.title}</strong><small>{resource.owner_name || selected.display_name} · {resource.item_count ?? 0} {t('playlistItems')}</small></span>{resource.is_private && <span className="badge">{t('privateResource')}</span>}<ChevronLeft className="resource-chevron" /></button>)}{!busy && !resources.length && <div className="account-empty"><FolderHeart /><strong>{t('noResources')}</strong></div>}</div><div className="account-pagination"><button disabled={resourceOffset === 0 || busy} onClick={() => void loadResources(selected.id, kind, Math.max(0, resourceOffset - bilibiliPageSize))}>{t('previousPage')}</button><span>{resourceTotal ? `${resourceOffset + 1}-${Math.min(resourceOffset + bilibiliPageSize, resourceTotal)} / ${resourceTotal}` : '0 / 0'}</span><button disabled={resourceOffset + bilibiliPageSize >= resourceTotal || busy} onClick={() => void loadResources(selected.id, kind, resourceOffset + bilibiliPageSize)}>{t('nextPage')}</button></div></section>
+        : <section className="account-entries"><header><button className="icon-button" onClick={() => { setOpened(null); setSelectedEntryIds([]); }} title={t('back')}><ChevronLeft /></button><div><h2>{opened.resource.title}</h2><p>{opened.page.total} {t('playlistItems')}</p></div><a className="icon-button" href={opened.resource.source_url} target="_blank" rel="noreferrer" title={t('sourcePage')}><ExternalLink /></a></header><div className="account-entry-toolbar"><label className="check"><input type="checkbox" checked={opened.entries.some(isEntryDownloadable) && opened.entries.filter(isEntryDownloadable).every((entry) => selectedEntryIds.includes(entry.id!))} onChange={(event) => setSelectedEntryIds(event.target.checked ? opened.entries.filter(isEntryDownloadable).map((entry) => entry.id!) : [])} />{t('selectCurrentPage')}</label><span><button disabled={busy} onClick={() => void downloadAndMonitor()}><Radar />{t('createMonitor')}</button><button className="primary" disabled={!selectedEntryIds.length || busy} onClick={() => void downloadSelected()}><Download />{t('downloadSelected')} ({selectedEntryIds.length})</button></span></div><div className="account-entry-list">{opened.entries.map((entry) => { const downloadable = isEntryDownloadable(entry); return <label key={`${entry.index}-${entry.id}`} className={downloadable ? '' : 'unavailable'}><input type="checkbox" disabled={!downloadable} checked={Boolean(downloadable && entry.id && selectedEntryIds.includes(entry.id))} onChange={() => downloadable && entry.id && setSelectedEntryIds((current) => current.includes(entry.id!) ? current.filter((id) => id !== entry.id) : [...current, entry.id!])} /><span>{entry.index}</span><span><span className="account-entry-title"><strong>{entry.title || entry.id}</strong><small className={`badge ${entry.entry_type === 'favorite_collection' || entry.entry_type === 'multipart_video' ? 'blue' : ''}`}>{entryTypeLabel(entry, t)}</small>{!downloadable && <small className="badge red">{t(entry.entry_type === 'audio' ? 'unsupportedFavoriteItem' : 'videoUnavailable')}</small>}</span><small>{entry.channel || '-'}{entry.duration ? ` · ${Math.round(entry.duration / 60)} ${t('minutes')}` : ''}</small></span></label>; })}</div><div className="account-pagination"><button disabled={entryOffset === 0 || busy} onClick={() => void openResource(opened.resource, Math.max(0, entryOffset - bilibiliPageSize))}>{t('previousPage')}</button><span>{entryOffset + 1}-{Math.min(entryOffset + bilibiliPageSize, opened.page.total)} / {opened.page.total}</span><button disabled={!opened.page.has_more || busy} onClick={() => void openResource(opened.resource, entryOffset + bilibiliPageSize)}>{t('nextPage')}</button></div></section>}</>}
       </>}
       {!adding && !selected && !!accounts.length && <div className="account-empty"><CheckCircle2 /><strong>{t('selectAccount')}</strong></div>}
     </main>

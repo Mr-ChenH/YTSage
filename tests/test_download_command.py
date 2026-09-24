@@ -224,6 +224,18 @@ def test_youtube_android_fallback_uses_combined_format() -> None:
     assert command[command.index("--extractor-args") + 1] == "youtube:player_client=android"
 
 
+def test_douyin_download_explicitly_disables_playlist_expansion() -> None:
+    request = CreateTaskRequest(url="https://www.douyin.com/video/1234567890123456789")
+
+    with (
+        patch("ytsage.server.services.download_service.ytdlp_base_command", return_value=["yt-dlp"]),
+        patch("ytsage.server.services.download_service.ffmpeg_location_arg", return_value=None),
+    ):
+        command = build_download_command(request, Path("/downloads"))
+
+    assert "--no-playlist" in command
+
+
 def test_non_youtube_download_does_not_enable_youtube_workarounds() -> None:
     request = CreateTaskRequest(url="https://www.bilibili.com/video/BVexample")
 

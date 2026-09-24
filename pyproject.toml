@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ytsage"
-version = "5.4.6"
+version = "5.5.0"
 description = "Self-hosted YTSage server with a React-style web interface for yt-dlp downloads."
 authors = [
     { name = "oop7", email = "oop7_support@proton.me" },
@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.0.0",
     "yt-dlp>=2024.1.0",
+    "playwright==1.52.0",
     "requests>=2.32.5",
     "packaging>=25.0",
     "loguru>=0.7.3",
@@ -50,8 +51,8 @@ ffmpeg-fallback = ["imageio-ffmpeg>=0.5.1"]
 ytsage = "ytsage.server.app:main"
 
 [project.urls]
-Homepage = "https://github.com/oop7/YTSage"
-Bug-Tracker = "https://github.com/oop7/YTSage/issues"
+Homepage = "https://github.com/Mr-ChenH/YTSage"
+Bug-Tracker = "https://github.com/Mr-ChenH/YTSage/issues"
 Reddit = "https://www.reddit.com/r/NO-N_A_M_E/"
 
 [tool.setuptools]

@@ -7,7 +7,7 @@
 
 在浏览器中分析媒体链接，下载视频、音频、字幕和播放列表，并集中管理任务、历史记录与本地媒体文件。
 
-[![Docker Image](https://img.shields.io/badge/Docker-xmoli%2Fytsage-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/xmoli/ytsage)
+[![Docker Image](https://img.shields.io/badge/GHCR-ghcr.io%2Fmr--chenh%2Fytsage-2496ED?logo=github&logoColor=white)](https://github.com/Mr-ChenH/YTSage/pkgs/container/ytsage)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Web_API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -70,8 +70,9 @@ YTSage 将 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 和 [FFmpeg](https://ffmpe
 ### 配置与安全
 
 - SQLite 持久化任务和下载历史
-- 管理默认和 YouTube Cookies，并添加多个独立的 Bilibili 账号
-- 按账号浏览收藏夹、收藏的收藏夹和稍后再看，支持分页选择下载
+- 管理默认和站点 Cookies，并添加多个相互隔离的 Bilibili 或抖音账号
+- 按 Bilibili 账号浏览收藏夹、收藏的收藏夹和稍后再看，支持分页选择下载
+- 使用抖音账号 Cookie 分析和下载单个视频，并分别显示账号身份与目标提取状态
 - 可选 Bearer Token 访问控制
 - 查看服务、目录、yt-dlp 和 FFmpeg 健康状态
 - 在系统页面更新 yt-dlp 和 FFmpeg 辅助依赖
@@ -88,7 +89,7 @@ YTSage 将 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 和 [FFmpeg](https://ffmpe
 ```yaml
 services:
   init-permissions:
-    image: xmoli/ytsage:latest
+    image: ghcr.io/mr-chenh/ytsage:latest
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -102,7 +103,7 @@ services:
     restart: "no"
 
   ytsage:
-    image: xmoli/ytsage:latest
+    image: ghcr.io/mr-chenh/ytsage:latest
     container_name: ytsage-server
     restart: unless-stopped
     depends_on:
@@ -148,7 +149,7 @@ docker run -d \
   -e TZ=Asia/Shanghai \
   -v "$(pwd)/data/config:/config" \
   -v "$(pwd)/data/downloads:/downloads" \
-  xmoli/ytsage:latest
+  ghcr.io/mr-chenh/ytsage:latest
 ```
 
 ### 从源码构建镜像
@@ -156,7 +157,14 @@ docker run -d \
 ```bash
 git clone https://github.com/Mr-ChenH/YTSage.git
 cd YTSage
-docker compose up -d --build
+docker build --pull -t ytsage:local .
+docker run -d \
+  --name ytsage-server \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v "$(pwd)/data/config:/config" \
+  -v "$(pwd)/data/downloads:/downloads" \
+  ytsage:local
 ```
 
 ## 数据持久化
@@ -239,10 +247,15 @@ Authorization: Bearer <token>
 - `default`：所有未匹配专用配置的网站
 - `youtube`：YouTube
 - `bilibili`：哔哩哔哩
+- `douyin`：抖音
 
 Cookies 保存在 `/config`，请将该目录视为敏感数据，不要提交到 Git 或公开分享。
 
 多个哔哩哔哩账号通过“账号”页面管理。推荐使用哔哩哔哩客户端扫码登录：YTSage 会同时保存账号 Cookie 和独立的刷新令牌，每日检查一次平台是否要求续期，并仅在需要时自动轮换凭据。每个账号使用独立的 `/config/accounts/{account_id}/cookies.txt` 和权限受限的刷新令牌文件，可分别验证登录、浏览我的收藏夹、收藏的收藏夹和稍后再看。账号资源按页获取，选择条目后仍通过现有任务队列逐项下载；“下载并监控”会下载当前资源并在后续检查中只下载新增视频。
+
+抖音账号同样通过“账号”页面隔离保存，支持 Netscape `cookies.txt`、浏览器扩展 JSON 导出，以及完整的 `Cookie: key=value; ...` 文本。账号资源浏览使用内置 Playwright Chromium：YTSage 为每个账号保留独立的进程内浏览器会话，载入所选账号 Cookie，打开抖音站内作品、收藏视频和收藏夹页面，并仅解析页面自身返回的 JSON。服务会在启动就绪前预热有效账号的三个资源首屏；后续请求优先返回最近一次规范化结果，过期数据由真实页面在后台刷新，翻页则复用当前页面已观察到的进度继续增量滚动。Cookie 文件变化或服务停止时，缓存、页面历史和对应会话会立即失效并关闭。系统不会生成签名参数、绕过验证码、下载媒体或向客户端暴露 Cookie、游标及平台内部标识。浏览结果仅包含规范化的 `https://www.douyin.com/video/{数字}` 页面地址，删除、私密、图文或无法识别的项目会标记为不可用。抖音批量下载、播放列表任务和监控仍保持禁用，单视频下载继续要求分析证明。非 Docker 安装需执行 `python -m playwright install --no-shell chromium`；`mise run backend:install` 和 Docker 镜像会自动安装浏览器运行时。身份接口仍可能独立触发风控，因此身份状态“未验证”不等于目标不可下载。
+
+抖音下载必须紧接一次成功分析：服务端仅在确认真实可下载格式后签发短时、单次使用且同时绑定规范视频 URL 和所选账号的下载证明，前端只在内存中把该证明提交给新任务。证明不会写入工作台 `localStorage`、任务记录、日志或界面；切换 URL 或账号会立即作废当前分析，证明缺失、过期、无效或绑定不匹配时必须重新分析。任务续传仍在原任务内进行；任务“重新开始”和历史“重新下载”会创建新任务，因此抖音来源必须先回到工作台重新分析。此机制不依赖浏览器自动化，也不会尝试绕过签名、验证码、设备校验或平台风控。
 
 原有 Cookie 文件或粘贴导入继续可用，但普通 Cookie 导出不包含浏览器 `localStorage.ac_time_value` 中的刷新令牌，因此这类账号只能验证有效期，不能自动续期。用户主动退出、修改密码、安全风控或平台撤销会话后，即使扫码账号也需要重新登录。
 
@@ -265,7 +278,7 @@ aria2c -i folder.aria2.txt
 
 ## 更新
 
-Compose 使用 `xmoli/ytsage:latest`，更新时无需修改配置文件：
+Compose 使用 GitHub Container Registry 上的 `ghcr.io/mr-chenh/ytsage:latest`，更新时无需修改配置文件：
 
 ```bash
 docker compose pull
@@ -281,41 +294,33 @@ docker image prune
 如果需要固定版本以避免自动切换，可以使用版本标签，例如：
 
 ```yaml
-image: xmoli/ytsage:5.4.6
+image: ghcr.io/mr-chenh/ytsage:5.5.0
 ```
 
-### 自动构建并发布镜像
+### GitHub 自动构建并发布镜像
 
-维护者可以使用仓库内的发布脚本拉取最新代码、构建镜像并推送 Docker Hub。首次使用前先登录镜像仓库：
+仓库的 `.github/workflows/docker-publish.yml` 会使用 GitHub Actions 构建并推送镜像到 GitHub Container Registry：
+
+- 推送到默认分支 `main`：发布 `latest`、`pyproject.toml` 项目版本和 `sha-<提交>` 标签。
+- 推送 `v*` Git 标签：发布 `latest`、完整语义版本、主次版本和提交 SHA 标签。
+- 在 Actions 页面手工运行：构建当前所选分支并发布提交 SHA 标签。
+
+工作流使用 GitHub 自动提供的 `GITHUB_TOKEN` 和 `packages: write` 权限，不需要配置外部镜像仓库密钥。首次发布后，应在仓库 Packages 页面确认 `ytsage` 容器包为公开可见；公开包可以直接拉取，无需登录：
 
 ```bash
-docker login
+docker pull ghcr.io/mr-chenh/ytsage:latest
+docker image inspect ghcr.io/mr-chenh/ytsage:latest --format '{{.Size}}'
+docker history ghcr.io/mr-chenh/ytsage:latest
 ```
 
-确保工作区没有未提交修改，并在 `pyproject.toml` 中设置好待发布版本，然后执行：
+如需手工发布，先登录 GHCR：
 
 ```bash
+printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
 ./scripts/publish-docker.sh
 ```
 
-脚本会依次执行：
-
-1. 使用 `git pull --ff-only` 拉取当前分支的最新代码。
-2. 从 `pyproject.toml` 读取项目版本。
-3. 拉取最新基础镜像并构建 YTSage。
-4. 生成 `xmoli/ytsage:<版本>` 和 `xmoli/ytsage:latest` 两个标签。
-5. 将两个标签推送到 Docker Hub。
-6. 输出本地镜像的解压大小，便于和上一版本比较。
-
-Docker Hub 页面上的 `Repository size` 是仓库存储统计，不等同于拉取 `latest` 所需的单镜像大小。它可能包含旧推送遗留且尚未回收的层，并存在统计延迟。即使仓库只剩 `latest` 标签，删除旧标签后旧层也不一定立即从该数字中消失。检查当前镜像时，以本地 `docker image inspect` 和拉取日志为准：
-
-```bash
-docker pull xmoli/ytsage:latest
-docker image inspect xmoli/ytsage:latest --format '{{.Size}}'
-docker history xmoli/ytsage:latest
-```
-
-正式执行前可以预览命令：
+本地脚本默认发布 `ghcr.io/mr-chenh/ytsage:<版本>` 和 `ghcr.io/mr-chenh/ytsage:latest`。正式执行前可以预览命令：
 
 ```bash
 ./scripts/publish-docker.sh --dry-run

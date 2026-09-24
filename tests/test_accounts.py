@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,42 @@ from ytsage.server.services.task_manager import TaskManager
 
 
 COOKIE = "# Netscape HTTP Cookie File\n.bilibili.com\tTRUE\t/\tTRUE\t4102444800\tSESSDATA\ttest-session\n"
+REFRESH_COOKIE = COOKIE + ".bilibili.com\tTRUE\t/\tTRUE\t4102444800\tbili_jct\ttest-csrf\n"
+DOUYIN_COOKIE = "# Netscape HTTP Cookie File\n.douyin.com\tTRUE\t/\tTRUE\t4102444800\tsessionid\ttest-session\n"
+
+
+class FakeWarmProvider:
+    platform = "douyin"
+    cookie_domain = ".douyin.com"
+
+    def __init__(self) -> None:
+        self.warmed: list[str] = []
+        self.closed = False
+
+    def warm(self, account: PlatformAccount, cookie_file: Path) -> None:
+        assert cookie_file.is_file()
+        self.warmed.append(account.id)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.anyio
+async def test_account_service_warms_douyin_accounts_before_start_returns(tmp_path: Path):
+    storage = Storage(tmp_path / "state.db")
+    account = storage.create_account("douyin-a", "douyin", "A", "accounts/douyin-a/cookies.txt", True)
+    cookie_file = tmp_path / "accounts" / account.id / "cookies.txt"
+    cookie_file.parent.mkdir(parents=True)
+    cookie_file.write_text(DOUYIN_COOKIE, encoding="utf-8")
+    provider = FakeWarmProvider()
+    service = AccountService(tmp_path, storage, douyin=provider)
+
+    await service.start()
+
+    assert provider.warmed == [account.id]
+    assert service._started is True
+    await service.stop()
+    assert provider.closed is True
 
 
 class FakeIdentityProvider:
@@ -35,6 +73,36 @@ class FakeIdentityProvider:
 
     def list_entries(self, *args, **kwargs):
         raise NotImplementedError
+
+
+class CoordinatedResourceProvider:
+    platform = "bilibili"
+    cookie_domain = ".bilibili.com"
+
+    def __init__(self) -> None:
+        self.guard = threading.Lock()
+        self.call_counts: dict[str, int] = {}
+        self.entered: dict[tuple[str, int], threading.Event] = {}
+        self.releases: dict[str, threading.Event] = {}
+        self.fail_first: set[str] = set()
+
+    def _call(self, account: PlatformAccount):
+        with self.guard:
+            ordinal = self.call_counts.get(account.id, 0)
+            self.call_counts[account.id] = ordinal + 1
+            entered = self.entered.setdefault((account.id, ordinal), threading.Event())
+            release = self.releases.setdefault(account.id, threading.Event())
+        entered.set()
+        if ordinal == 0 and account.id in self.fail_first:
+            raise RuntimeError("provider failed")
+        release.wait(timeout=5)
+        return object()
+
+    def list_resources(self, account: PlatformAccount, *args, **kwargs):
+        return self._call(account)
+
+    def list_entries(self, account: PlatformAccount, *args, **kwargs):
+        return self._call(account)
 
 
 class FakeResponse:
@@ -90,6 +158,53 @@ def test_bilibili_qr_poll_maps_pending_and_scanned_states():
 
     assert provider.poll_qr_login(challenge).status == "pending"
     assert provider.poll_qr_login(challenge).status == "scanned"
+
+
+def test_bilibili_cookie_refresh_check_reads_mozilla_cookie_jar(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(REFRESH_COOKIE, encoding="utf-8")
+    provider = BilibiliProvider()
+
+    with patch("ytsage.server.providers.bilibili.requests.get", return_value=FakeResponse({
+        "code": 0, "data": {"refresh": False, "timestamp": 123456},
+    })) as get:
+        required, timestamp = provider.cookie_refresh_required(cookie)
+
+    assert required is False
+    assert timestamp == 123456
+    assert get.call_args.kwargs["params"]["csrf"] == "test-csrf"
+
+
+def test_bilibili_cookie_refresh_reads_mozilla_cookie_jar(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(REFRESH_COOKIE, encoding="utf-8")
+    provider = BilibiliProvider()
+    public_key = Mock()
+    public_key.encrypt.return_value = b"encrypted"
+    session = requests.Session()
+
+    with (
+        patch("ytsage.server.providers.bilibili.serialization.load_pem_public_key", return_value=public_key),
+        patch("ytsage.server.providers.bilibili.requests.get", return_value=FakeResponse({}, text='<div id="1-name">refresh-csrf</div>')),
+        patch("ytsage.server.providers.bilibili.requests.Session", return_value=session),
+        patch.object(session, "post", return_value=FakeResponse({"code": 0, "data": {"refresh_token": "new-token"}})) as post,
+    ):
+        result = provider.refresh_cookies(cookie, "old-token", 123456)
+
+    assert result.refresh_token == "new-token"
+    assert result.old_refresh_token == "old-token"
+    assert post.call_args.kwargs["data"]["csrf"] == "test-csrf"
+
+
+def test_bilibili_cookie_refresh_confirmation_reads_mozilla_cookie_jar(tmp_path: Path):
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text(REFRESH_COOKIE, encoding="utf-8")
+    provider = BilibiliProvider()
+
+    with patch("ytsage.server.providers.bilibili.requests.post", return_value=FakeResponse({"code": 0, "data": {}})) as post:
+        provider.confirm_cookie_refresh(cookie, "old-token")
+
+    assert post.call_args.kwargs["data"] == {"csrf": "test-csrf", "refresh_token": "old-token"}
 
 
 def test_account_refresh_records_check_when_renewal_is_not_required(tmp_path: Path):
@@ -274,6 +389,69 @@ def test_account_service_rejects_library_access_for_invalid_login(tmp_path: Path
 
     with pytest.raises(AccountConflictError, match="login is invalid"):
         service.resolve_cookie_file(account.id, "bilibili")
+
+
+def _resource_lock_service(tmp_path: Path, account_ids: tuple[str, ...]) -> tuple[AccountService, CoordinatedResourceProvider]:
+    storage = Storage(tmp_path / "resource-locks.db")
+    provider = CoordinatedResourceProvider()
+    for account_id in account_ids:
+        directory = tmp_path / "accounts" / account_id
+        directory.mkdir(parents=True)
+        (directory / "cookies.txt").write_text(COOKIE, encoding="utf-8")
+        storage.create_account(account_id, "bilibili", account_id, f"accounts/{account_id}/cookies.txt")
+        storage.update_account(account_id, state="valid")
+    return AccountService(tmp_path, storage, providers={"bilibili": provider}), provider  # type: ignore[dict-item]
+
+
+def test_account_resource_calls_serialize_per_account(tmp_path: Path):
+    service, provider = _resource_lock_service(tmp_path, ("account-a",))
+    second_started = threading.Event()
+    provider.entered[("account-a", 0)] = threading.Event()
+    provider.entered[("account-a", 1)] = threading.Event()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.list_resources, "account-a", "created_favorite", 0, 20)
+        assert provider.entered[("account-a", 0)].wait(1)
+        second = pool.submit(lambda: (second_started.set(), service.list_entries("account-a", "resource", 0, 20))[1])
+        assert second_started.wait(1)
+        assert not provider.entered[("account-a", 1)].wait(0.1)
+        provider.releases["account-a"].set()
+        first.result(timeout=1)
+        second.result(timeout=1)
+
+    assert provider.entered[("account-a", 1)].is_set()
+
+
+def test_account_resource_calls_for_different_accounts_run_in_parallel(tmp_path: Path):
+    service, provider = _resource_lock_service(tmp_path, ("account-a", "account-b"))
+    for account_id in ("account-a", "account-b"):
+        provider.entered[(account_id, 0)] = threading.Event()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.list_resources, "account-a", "created_favorite", 0, 20)
+        second = pool.submit(service.list_resources, "account-b", "created_favorite", 0, 20)
+        assert provider.entered[("account-a", 0)].wait(1)
+        assert provider.entered[("account-b", 0)].wait(1)
+        provider.releases["account-a"].set()
+        provider.releases["account-b"].set()
+        first.result(timeout=1)
+        second.result(timeout=1)
+
+
+def test_account_resource_lock_releases_after_provider_error(tmp_path: Path):
+    service, provider = _resource_lock_service(tmp_path, ("account-a",))
+    provider.fail_first.add("account-a")
+    provider.entered[("account-a", 0)] = threading.Event()
+    provider.entered[("account-a", 1)] = threading.Event()
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        service.list_resources("account-a", "created_favorite", 0, 20)
+    provider.releases.setdefault("account-a", threading.Event()).set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(service.list_entries, "account-a", "resource", 0, 20)
+        result.result(timeout=1)
+    assert provider.entered[("account-a", 1)].is_set()
 
 
 def test_bilibili_provider_rejects_empty_created_favorite_payload_as_invalid_login(tmp_path: Path):

@@ -549,6 +549,9 @@ This table is preferable to placing thousands of entries into `options_json`, bu
 - Prevent SSRF by using provider-owned endpoint constants; clients submit opaque resource IDs, not arbitrary provider API URLs.
 - Validate platform source URLs before handing them to yt-dlp.
 - Treat account IDs as identifiers, not authorization boundaries. Server bearer auth protects all accounts.
+- Treat a Douyin download proof as an ephemeral server capability: issue it only after a live target probe confirms formats with usable media URLs; bind it to the canonical single-video URL and selected account; expire and consume it once.
+- Never persist a Douyin proof in browser `localStorage`, task options, database records, logs, WebSocket events, screenshots, or user-visible diagnostics. URL or account changes must discard the current analysis and proof.
+- A proof authorizes only creation of the analyzed task. It is not a platform credential and must not be used to bypass signatures, CAPTCHA, device checks, or risk-control challenges.
 - Document that Cookie exports grant the same content access as the browser session and should be revoked by logging out or rotating sessions if exposed.
 
 ## 11. Error and State Model
@@ -696,12 +699,25 @@ Deliverables:
 
 - `account_id` in analysis and task contracts.
 - Safe account resolution in analyzer and executor.
+- Douyin Cookie import plus account-aware single-video analysis and download.
+- A short-lived, single-use `douyin_download_proof`, returned only when the live analysis found real formats with usable media URLs and bound to the canonical URL plus selected account.
+- Frontend-only in-memory proof forwarding; URL/account changes invalidate analysis, and proof errors require re-analysis without creating a task.
+- Distinct actionable errors for fresh cookies, provider risk control, timeout, and provider unavailability; only an explicit invalid-login result may be described as invalid login.
 - Retry, resume, restart, and WebSocket response compatibility.
 - Legacy task compatibility tests.
+
+Live-probe conclusion:
+
+- Douyin's identity endpoint can be risk-controlled independently of media extraction, so `unknown` identity is not evidence that login is invalid and is not a downloadability verdict.
+- Target downloadability is established separately by a bounded yt-dlp probe of the requested single video. Metadata-only responses and formats without usable URLs do not produce a proof.
+- The single-video download proof does not depend on browser automation and does not attempt signature, CAPTCHA, device-check, or risk-control bypasses; account library browsing separately uses Playwright Chromium to observe first-party page responses.
+- Douyin works, saved videos, collection folders, and folder entries are available through isolated account browser contexts; bulk/playlist tasks, monitoring, browser/QR login, and automatic renewal remain deferred.
 
 Exit criteria:
 
 - The chosen account is used for every item of a playlist task.
+- A new Douyin task is accepted only with an unexpired proof matching its canonical URL and account, and that proof cannot be replayed. Resume continues the already-authorized task; restart and history redownload require a new analysis.
+- URL or account changes prevent stale proof submission; no proof appears in durable client or server state.
 - Replacing credentials repairs subsequent attempts.
 - Explicit account failures never silently fall back.
 
@@ -734,7 +750,7 @@ Exit criteria:
 
 - Common flow is: add account, open favorite, select entries, choose format, download.
 - Page transitions retain selected account and resource state during the SPA session.
-- No large resource is stored in `localStorage`.
+- No large resource or ephemeral download proof is stored in `localStorage`.
 
 ### Phase 5: Account-aware monitoring
 

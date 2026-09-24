@@ -5,6 +5,7 @@ import uuid
 from typing import Callable
 
 from ..models import AnalyzeRequest, AnalyzeResponse, CreateTaskRequest, PageInfo, PlaylistEntry, PlaylistMonitorCreate, PlaylistMonitorCreateResponse, PlaylistMonitorLogListResponse, PlaylistMonitorResponse
+from .cookies import cookie_profile_for_url
 from .storage import Storage, utc_now
 from .task_manager import TaskManager
 
@@ -47,6 +48,8 @@ class PlaylistMonitorService:
         self._runner = None
 
     async def create(self, request: PlaylistMonitorCreate) -> PlaylistMonitorCreateResponse:
+        if cookie_profile_for_url(request.url) == "douyin":
+            raise ValueError("Douyin monitoring is not available in the current integration phase.")
         account_id = request.account_id or request.download_options.account_id
         analysis = await asyncio.to_thread(self.analyze, AnalyzeRequest(url=request.url, account_id=account_id))
         if not analysis.is_playlist:

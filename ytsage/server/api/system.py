@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, Query
 
 from ..config import ServerConfig
 from ..models import CookieSaveRequest, CookieSaveResponse, DependencyUpdateResponse, FilenameTemplateSaveRequest, HealthResponse, SettingsResponse
-from ..services.cookies import clear_cookie_login_status, configured_cookie_profiles, cookie_file_path, cookie_profile_status, cookie_profile_statuses, normalize_cookie_profile, normalize_cookies
+from ..services.cookies import clear_cookie_login_status, configured_cookie_profiles, cookie_domain_for_profile, cookie_file_path, cookie_profile_status, cookie_profile_statuses, normalize_cookie_profile, normalize_cookies
 from ..services.dependencies import ffmpeg_version, ytdlp_version
 from ..services.dependency_updates import DependencyUpdateManager
 from ..services.settings import default_video_resolution, filename_template, save_default_video_resolution, save_filename_template
+from ..providers.douyin_browser import chromium_capability
 
 AuthDependency = Callable[..., None]
 
@@ -39,7 +40,8 @@ def create_system_router(config: ServerConfig, auth_dependency: AuthDependency) 
     def health() -> HealthResponse:
         download_writable, config_writable = _is_writable(config.download_dir), _is_writable(config.config_dir)
         yt_dlp, ffmpeg = ytdlp_version(), ffmpeg_version()
-        return HealthResponse(healthy=download_writable and config_writable and yt_dlp != "not found" and ffmpeg != "not found", download_dir_writable=download_writable, config_dir_writable=config_writable, yt_dlp=yt_dlp, ffmpeg=ffmpeg, queue_concurrency=config.queue_concurrency, auth_configured=bool(config.auth_token))
+        browser_available = bool(chromium_capability()["available"])
+        return HealthResponse(healthy=download_writable and config_writable and yt_dlp != "not found" and ffmpeg != "not found", download_dir_writable=download_writable, config_dir_writable=config_writable, yt_dlp=yt_dlp, ffmpeg=ffmpeg, queue_concurrency=config.queue_concurrency, auth_configured=bool(config.auth_token), douyin_browser_available=browser_available)
 
     @router.get("/dependencies", response_model=DependencyUpdateResponse)
     def dependency_status(refresh: bool = Query(default=False)) -> DependencyUpdateResponse:
@@ -59,7 +61,7 @@ def create_system_router(config: ServerConfig, auth_dependency: AuthDependency) 
     @router.post("/settings/cookies", response_model=CookieSaveResponse)
     def save_cookies(request: CookieSaveRequest) -> CookieSaveResponse:
         profile = normalize_cookie_profile(request.profile)
-        normalized = normalize_cookies(request.content)
+        normalized = normalize_cookies(request.content, cookie_domain_for_profile(profile))
         target = cookie_file_path(config.config_dir, profile)
         clear_cookie_login_status(config.config_dir, profile)
         if normalized is None:

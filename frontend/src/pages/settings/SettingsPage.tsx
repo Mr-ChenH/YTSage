@@ -15,10 +15,10 @@ interface SettingsPageProps {
 }
 
 type SettingsSection = 'downloads' | 'credentials' | 'access';
-const cookieProfiles = ['default', 'bilibili', 'youtube'] as const;
+const cookieProfiles = ['default', 'bilibili', 'douyin', 'youtube'] as const;
 
 function cookieProfileLabel(profile: string, t: T): string {
-  const labels: Record<string, TKey> = { default: 'cookieProfileDefault', bilibili: 'cookieProfileBilibili', youtube: 'cookieProfileYoutube' };
+  const labels: Record<string, TKey> = { default: 'cookieProfileDefault', bilibili: 'cookieProfileBilibili', douyin: 'cookieProfileDouyin', youtube: 'cookieProfileYoutube' };
   return labels[profile] ? t(labels[profile]) : profile;
 }
 
@@ -126,7 +126,7 @@ export function SettingsPage({ api, settings, token, t, onToken, onSaved }: Sett
         <div className="settings-form credential-form">
           <div className="cookie-profile-tabs" role="tablist" aria-label={t('cookieProfile')}>{cookieProfiles.map((profile) => { const status = settings.cookie_profile_status?.[profile]; const tone = cookieTone(status); return <button key={profile} className={cookieProfile === profile ? 'active' : ''} onClick={() => { setCookieProfile(profile); setCookieStatusMessage(null); }} role="tab" aria-selected={cookieProfile === profile}><span className={`cookie-profile-dot ${tone}`} /><span><strong>{cookieProfileLabel(profile, t)}</strong><small>{cookieExpiryLabel(status, t)}</small></span></button>; })}</div>
           <div className="cookie-status-grid"><div><span>{t('cookieExpiryStatus')}</span><strong>{cookieExpiryLabel(selectedCookieStatus, t)}</strong></div><div><span>{t('cookieLoginStatus')}</span><strong title={cookieLoginLabel(selectedCookieStatus, t)}>{cookieLoginLabel(selectedCookieStatus, t)}</strong></div><div><span>{t('validCookies')}</span><strong>{selectedCookieStatus?.valid_count || 0} / {selectedCookieStatus?.total_count || 0}</strong></div><div><span>{t('cookieEarliestExpiry')}</span><strong>{selectedCookieStatus?.earliest_expiry ? new Date(selectedCookieStatus.earliest_expiry * 1000).toLocaleString() : '-'}</strong></div></div>
-          <label className="cookie-input-field"><span>{t('replaceCookieData')}</span><textarea className="cookie-textarea" value={cookieContent} placeholder={t('cookiePastePlaceholder')} onChange={(event) => setCookieContent(event.target.value)} /><small>{t('cookieReplaceHint')}</small></label>
+          <label className="cookie-input-field"><span>{t('replaceCookieData')}</span><textarea className="cookie-textarea" value={cookieContent} placeholder={t(cookieProfile === 'default' ? 'cookieFilePastePlaceholder' : 'cookiePastePlaceholder')} onChange={(event) => setCookieContent(event.target.value)} /><small>{t('cookieReplaceHint')}</small></label>
         </div>
         <footer className="settings-actions"><label className="file-button"><input type="file" accept=".txt,.cookies,.json" onChange={(event) => void loadCookieFile(event.target.files?.[0])} /><Upload aria-hidden="true" />{t('chooseCookieFile')}</label><button className={cookieContent.trim() || cookieBusy ? 'primary' : ''} onClick={() => void saveCookies(cookieContent)} disabled={cookieBusy || !cookieContent.trim()}><Save aria-hidden="true" />{cookieBusy ? t('working') : t('replaceCookies')}</button><button className="danger" onClick={() => void saveCookies('')} disabled={cookieBusy || !selectedCookieStatus?.configured}><Trash2 aria-hidden="true" />{t('clearCookies')}</button>{cookieStatusMessage && <span className="settings-feedback">{cookieStatusMessage}</span>}</footer>
       </section>}

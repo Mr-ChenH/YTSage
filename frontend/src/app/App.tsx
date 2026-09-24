@@ -144,6 +144,30 @@ export function App() {
     setFileLibrary(null);
     changePage('files');
   }
+  function analyzeHistoryUrl(url: string) {
+    setWorkspaceState((current) => ({
+      ...current,
+      url,
+      analysis: null,
+      accountId: null,
+      selectedFormat: null,
+      selectedPlaylistIndexes: [],
+      selectedSubtitleLangs: [],
+    }));
+    changePage('workspace');
+  }
+  function analyzeAccountResource(url: string, accountId: string) {
+    setWorkspaceState((current) => ({
+      ...current,
+      url,
+      analysis: null,
+      accountId,
+      selectedFormat: null,
+      selectedPlaylistIndexes: [],
+      selectedSubtitleLangs: [],
+    }));
+    changePage('workspace');
+  }
 
   return <div className="shell">
     <aside className="sidebar glass-surface">
@@ -154,10 +178,10 @@ export function App() {
     <main className="main">
       <TopBar page={page} health={health} authRequired={authRequired} token={token} locale={locale} t={t} onLocale={setLocale} onToken={saveToken} onRefresh={refreshCurrentPage} error={error} />
       {page === 'workspace' && <WorkspacePage api={api} t={t} settings={settings} state={workspaceState} onState={setWorkspaceState} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
-      {page === 'accounts' && <AccountsPage api={api} t={t} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
+      {page === 'accounts' && <AccountsPage api={api} health={health} t={t} onAnalyze={analyzeAccountResource} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'tasks' && <TasksPage tasks={tasks} api={api} t={t} onChanged={loadTasks} onCancel={async (id) => { const updated = await api.cancelTask(id); setTasks((current) => upsertTask(current, updated)); }} />}
       {page === 'monitors' && <MonitorsPage api={api} t={t} />}
-      {page === 'history' && <HistoryPage api={api} t={t} refreshKey={historyRevision} onOpenFiles={openFilesPage} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
+      {page === 'history' && <HistoryPage api={api} t={t} refreshKey={historyRevision} onOpenFiles={openFilesPage} onAnalyze={analyzeHistoryUrl} onTask={(task) => { setTasks((current) => upsertTask(current, task)); changePage('tasks'); }} />}
       {page === 'files' && <FilesPage library={fileLibrary} token={token} api={api} t={t} onLoaded={setFileLibrary} onPlay={playFile} />}
       {page === 'player' && <PlayerPage current={currentFile} queue={playQueue} folder={playFolder} token={token} api={api} t={t} onSelect={setCurrentFile} onQueue={setPlayQueue} onFolder={setPlayFolder} />}
       {page === 'settings' && <SettingsPage api={api} settings={settings} token={token} t={t} onToken={saveToken} onSaved={loadSettings} />}

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel 2>/dev/null || true)"
-IMAGE_NAME="${IMAGE_NAME:-xmoli/ytsage}"
+IMAGE_NAME="${IMAGE_NAME:-ghcr.io/mr-chenh/ytsage}"
 GIT_REMOTE="${GIT_REMOTE:-origin}"
 PULL_SOURCE=1
 DRY_RUN=0
@@ -17,7 +17,7 @@ usage() {
   <镜像>:latest
 
 选项：
-  --image <名称>    镜像仓库，默认 xmoli/ytsage
+  --image <名称>    镜像仓库，默认 ghcr.io/mr-chenh/ytsage
   --remote <名称>   Git 远端，默认 origin
   --no-pull         不执行 git pull，适用于 CI 已检出指定提交的场景
   --dry-run         只显示将执行的命令，不构建或推送
@@ -133,7 +133,7 @@ run docker push "$latest_image"
 if (( ! DRY_RUN )); then
     image_size="$(docker image inspect "$latest_image" --format '{{.Size}}')"
     image_size_mb="$((image_size / 1024 / 1024))"
-    log "本地镜像解压大小：${image_size_mb} MiB（Docker Hub 仓库存储统计还包含旧层，且可能延迟更新）"
+    log "本地镜像解压大小：${image_size_mb} MiB"
 fi
 
 if (( DRY_RUN )); then

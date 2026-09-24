@@ -763,6 +763,7 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .account-qr-login > a { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 11px; }
 .account-qr-login > a svg, .account-qr-login > button svg { width: 15px; height: 15px; }
 .account-refresh-error { color: var(--red) !important; }
+.account-verification-note { color: var(--amber) !important; }
 .account-entries > header { justify-content: flex-start; }
 .account-entries > header > div { min-width: 0; margin-right: auto; }
 .account-entry-toolbar { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); }
@@ -777,6 +778,23 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .account-entry-title { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .account-entry-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .account-entry-title .badge { flex: 0 0 auto; }
+.compact-resource-tabs { gap: 8px; }
+.compact-resource-tabs button { min-width: 92px; padding: 0 10px; }
+.account-runtime-status { min-height: 180px; padding: 20px; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--amber); }
+.account-runtime-status > svg { width: 24px; height: 24px; flex: 0 0 auto; }
+.account-runtime-status > div { max-width: 520px; display: grid; gap: 5px; }
+.account-runtime-status strong { font-size: 12px; }
+.account-runtime-status p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.douyin-entry-row { min-width: 0; min-height: 62px; padding: 8px; display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+.douyin-entry-row.unavailable { background: var(--surface); }
+.douyin-entry-index { color: var(--subtle); font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
+.douyin-entry-row > div { min-width: 0; display: grid; gap: 3px; }
+.douyin-entry-row strong, .douyin-entry-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.douyin-entry-row strong { font-size: 12px; }
+.douyin-entry-row small { color: var(--muted); font-size: 10px; }
+.douyin-entry-row .douyin-unavailable-reason { color: var(--red); white-space: normal; overflow-wrap: anywhere; }
+.douyin-entry-row > button { min-width: 132px; }
+.douyin-entry-row > button svg { width: 14px; height: 14px; }
 
 .main > .panel { margin-top: 18px; margin-bottom: 20px; }
 .settings-console { height: calc(100vh - 65px); padding: 14px 20px 18px; display: grid; grid-template-columns: 250px minmax(0,1fr); gap: 18px; overflow: hidden; }
@@ -819,7 +837,7 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
 .settings-feedback { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-size: 9px; }
 .settings-feedback svg { width: 13px; height: 13px; }
 .credential-form { gap: 13px; padding-top: 13px; }
-.cookie-profile-tabs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.cookie-profile-tabs { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .cookie-profile-tabs button { min-width: 0; min-height: 52px; padding: 7px 9px; display: grid; grid-template-columns: 8px minmax(0,1fr); align-items: center; gap: 7px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: var(--content); box-shadow: none; text-align: left; white-space: normal; }
 .cookie-profile-tabs button:last-child { border-right: 0; }
 .cookie-profile-tabs button.active { background: var(--accent-soft); }
@@ -1013,6 +1031,9 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .account-entry-toolbar { align-items: stretch; flex-direction: column; padding: 9px 0; }
   .account-entry-toolbar > span { display: grid; grid-template-columns: 1fr; }
   .account-entry-toolbar button { width: 100%; }
+  .douyin-entry-row { grid-template-columns: 28px minmax(0,1fr); align-items: start; }
+  .douyin-entry-row > button { width: 100%; min-width: 0; grid-column: 2; }
+  .account-runtime-status { align-items: flex-start; justify-content: flex-start; padding: 24px 4px; }
   .settings-console { height: auto; min-height: calc(100vh - 57px); padding: 10px 0 18px; display: block; overflow: visible; }
   .settings-nav { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-bottom: 1px solid var(--line); }
   .settings-nav button { min-width: 0; min-height: 64px; grid-template-columns: 24px minmax(0,1fr); border-right: 1px solid var(--line); border-bottom: 0; }
@@ -1024,7 +1045,10 @@ td input[type="radio"], td input[type="checkbox"] { width: 14px; min-height: 14p
   .settings-subsection { grid-template-columns: 1fr; gap: 10px; }
   .download-settings-grid { grid-template-columns: 1fr; }
   .settings-wide { grid-column: auto; }
-  .cookie-profile-tabs button { padding-inline: 6px; }
+  .cookie-profile-tabs { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cookie-profile-tabs button { padding-inline: 6px; border-bottom: 1px solid var(--line); }
+  .cookie-profile-tabs button:nth-child(2n) { border-right: 0; }
+  .cookie-profile-tabs button:nth-last-child(-n+2) { border-bottom: 0; }
   .cookie-status-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .runtime-config dl { grid-template-columns: 1fr; }
   .runtime-config dl > div { border-right: 0; border-bottom: 1px solid var(--line); }

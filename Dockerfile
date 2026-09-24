@@ -8,7 +8,7 @@ RUN npm ci
 COPY frontend ./
 RUN npm run build
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     YTSAGE_HOST=0.0.0.0 \
@@ -16,10 +16,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     YTSAGE_CONFIG_DIR=/config \
     YTSAGE_DOWNLOAD_DIR=/downloads \
     YTSAGE_QUEUE_CONCURRENCY=2 \
-    YTSAGE_AUTO_INSTALL_DEPS=0
+    YTSAGE_AUTO_INSTALL_DEPS=0 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gosu unzip \
+       libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 \
+       libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
+       libpango-1.0-0 libx11-6 \
+       libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 \
+       libxrandr2 fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
@@ -35,18 +41,19 @@ COPY ytsage ./ytsage
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=ui /app/frontend/dist ./ytsage/server/static
 RUN pip install --no-cache-dir --no-compile . \
+    && python -m playwright install --no-shell chromium \
     && find /usr/local/lib/python3.12/site-packages -type d -name '__pycache__' -prune -exec rm -rf {} +
 
 RUN useradd --create-home --uid 10001 ytsage \
     && mkdir -p /config /downloads \
-    && chown -R ytsage:ytsage /config /downloads /app \
+    && chown -R ytsage:ytsage /config /downloads /app /ms-playwright \
     && chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 8080
 VOLUME ["/config", "/downloads"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
 
 CMD ["ytsage"]

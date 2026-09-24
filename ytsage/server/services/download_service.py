@@ -8,6 +8,7 @@ from typing import Iterable
 from urllib.parse import urlparse
 
 from ..models import CreateTaskRequest, TaskProgress
+from ..providers.douyin import is_douyin_url
 from .dependencies import ffmpeg_location_arg, ytdlp_base_command
 
 _PROGRESS_RE = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
@@ -48,6 +49,8 @@ def build_download_command(
         single_item_directory = not bool(request.playlist_entries or request.playlist_items or "%(playlist_" in request.filename_template)
     output_template = _single_item_filename_template(request) if single_item_directory else request.filename_template
     cmd = [*ytdlp_base_command(), request.url, "--newline", "--progress", "--encoding", "utf-8", "-P", str(download_dir), "-o", output_template]
+    if is_douyin_url(request.url):
+        cmd.append("--no-playlist")
     ffmpeg_location = ffmpeg_location_arg()
     if ffmpeg_location:
         cmd.extend(["--ffmpeg-location", ffmpeg_location])

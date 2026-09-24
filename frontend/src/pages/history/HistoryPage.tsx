@@ -10,6 +10,7 @@ interface HistoryPageProps {
   api: ApiClient;
   t: T;
   onOpenFiles: () => void;
+  onAnalyze: (url: string) => void;
   onTask: (task: TaskResponse) => void;
   refreshKey: number;
 }
@@ -52,7 +53,17 @@ function mediaIcon(type: MediaType) {
   return FileQuestion;
 }
 
-export function HistoryPage({ api, t, onOpenFiles, onTask, refreshKey }: HistoryPageProps) {
+function isDouyinUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === 'douyin.com' || host.endsWith('.douyin.com') || host === 'iesdouyin.com' || host.endsWith('.iesdouyin.com');
+  } catch {
+    return false;
+  }
+}
+
+export function HistoryPage({ api, t, onOpenFiles, onAnalyze, onTask, refreshKey }: HistoryPageProps) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -148,7 +159,7 @@ export function HistoryPage({ api, t, onOpenFiles, onTask, refreshKey }: History
         <dl className="history-facts"><div><dt>{t('type')}</dt><dd>{mediaLabel(selected.media_type, t)}</dd></div><div><dt>{t('size')}</dt><dd>{formatBytes(selected.file_size)}</dd></div><div><dt>{t('downloadedAt')}</dt><dd>{new Date(selected.downloaded_at).toLocaleString()}</dd></div><div><dt>{t('taskSource')}</dt><dd>{entrySource(selected)}</dd></div>{historyPlaylistCount(selected) > 0 && <div><dt>{t('videoCount')}</dt><dd>{historyPlaylistCount(selected)} {t('playlistItems')}</dd></div>}</dl>
         {selected.output_path && <div className="history-path"><span>{t(historyMetadataBoolean(selected, 'output_is_directory') ? 'outputDirectory' : 'outputFile')}</span><strong title={selected.output_path}>{selected.output_path}</strong><button onClick={() => void copyPath(selected.output_path!)} title={t('copyPath')}>{copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}</button></div>}
         {selected.url && <div className="history-source"><span>{t('originalUrl')}</span><a href={selected.url} target="_blank" rel="noreferrer" title={selected.url}>{selected.url}</a><a className="icon-button" href={selected.url} target="_blank" rel="noreferrer" title={t('openSourceLink')}><ExternalLink aria-hidden="true" /></a></div>}
-        <div className="history-actions"><button className="primary" onClick={onOpenFiles}><FolderOpen aria-hidden="true" />{t('openFiles')}</button><button onClick={() => void redownload(selected)} disabled={!selected.task_id || busyId === selected.id}><RefreshCw aria-hidden="true" />{busyId === selected.id ? t('working') : t('redownload')}</button></div>
+        <div className="history-actions"><button className="primary" onClick={onOpenFiles}><FolderOpen aria-hidden="true" />{t('openFiles')}</button>{isDouyinUrl(selected.url) ? <button onClick={() => onAnalyze(selected.url!)} disabled={!selected.url}><RefreshCw aria-hidden="true" />{t('analyzeAgain')}</button> : <button onClick={() => void redownload(selected)} disabled={!selected.task_id || busyId === selected.id}><RefreshCw aria-hidden="true" />{busyId === selected.id ? t('working') : t('redownload')}</button>}</div>
         <div className="history-identity"><span>{t('historyId')}</span><code>{selected.id}</code>{selected.task_id && <><span>{t('taskId')}</span><code>{selected.task_id}</code></>}</div>
       </section>}
     </div>}

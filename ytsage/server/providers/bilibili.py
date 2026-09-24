@@ -17,6 +17,7 @@ from requests.cookies import RequestsCookieJar
 
 from ..analyzers.bilibili import _json_response, _load_cookie_jar, as_dict_list, as_float, as_int, as_str
 from ..models import AccountResource, AccountResourceEntriesResponse, AccountResourceListResponse, PageInfo, PlatformAccount, PlaylistEntry, PlaylistEntryGroup
+from .base import ProviderError
 
 _API = "https://api.bilibili.com"
 _AVATAR_HOST_SUFFIXES = (".hdslb.com", ".biliimg.com")
@@ -33,11 +34,8 @@ JNrRuoEUXpabUzGB8QIDAQAB
 -----END PUBLIC KEY-----"""
 
 
-class BilibiliProviderError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 502) -> None:
-        super().__init__(message)
-        self.code = code
-        self.status_code = status_code
+class BilibiliProviderError(ProviderError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -59,6 +57,14 @@ def normalize_image_url(value: Any) -> str | None:
     if parsed.scheme == "http" and any(host.endswith(suffix) for suffix in _AVATAR_HOST_SUFFIXES):
         return f"https://{parsed.netloc}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
     return url
+
+
+def _cookie_value(cookies: Any, name: str) -> str | None:
+    for cookie in cookies or ():
+        if getattr(cookie, "name", None) == name:
+            value = getattr(cookie, "value", None)
+            return str(value) if value is not None else None
+    return None
 
 
 @dataclass
@@ -86,10 +92,15 @@ class BilibiliRefreshResult:
 
 class BilibiliProvider:
     platform = "bilibili"
+    cookie_domain = ".bilibili.com"
+    allow_unverified_import = False
 
     def __init__(self, timeout: int = 15, http: Any = requests) -> None:
         self.timeout = timeout
         self.http = http
+
+    def validate_cookie_file(self, cookie_file: Path) -> None:
+        _load_cookie_jar(cookie_file)
 
     def start_qr_login(self) -> BilibiliQrSession:
         session = requests.Session()
@@ -152,7 +163,7 @@ class BilibiliProvider:
         try:
             response = requests.get(
                 f"{_PASSPORT_API}/x/passport-login/web/cookie/info",
-                params={"csrf": jar.get("bili_jct", "")},
+                params={"csrf": _cookie_value(jar, "bili_jct") or ""},
                 cookies=jar,
                 headers=_HEADERS,
                 timeout=self.timeout,
@@ -172,7 +183,7 @@ class BilibiliProvider:
 
     def _refresh_cookies(self, cookie_file: Path, refresh_token: str, timestamp: int) -> BilibiliRefreshResult:
         old_jar = _load_cookie_jar(cookie_file)
-        csrf = old_jar.get("bili_jct")
+        csrf = _cookie_value(old_jar, "bili_jct")
         if not csrf:
             raise BilibiliProviderError("account_login_invalid", "The Bilibili cookie has no CSRF token.", 424)
         public_key = serialization.load_pem_public_key(_REFRESH_PUBLIC_KEY)
@@ -208,7 +219,7 @@ class BilibiliProvider:
 
     def confirm_cookie_refresh(self, cookie_file: Path, old_refresh_token: str) -> None:
         jar = _load_cookie_jar(cookie_file)
-        csrf = jar.get("bili_jct")
+        csrf = _cookie_value(jar, "bili_jct")
         if not csrf:
             raise BilibiliProviderError("provider_response_invalid", "The refreshed Bilibili cookie has no CSRF token.")
         try:

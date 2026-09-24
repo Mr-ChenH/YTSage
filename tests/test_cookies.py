@@ -1,5 +1,8 @@
 from pathlib import Path
 
+from ytsage.server.api.system import create_system_router
+from ytsage.server.config import ServerConfig
+from ytsage.server.models import CookieSaveRequest
 from ytsage.server.services.cookies import (
     clear_cookie_login_status,
     cookie_file_for_url,
@@ -101,6 +104,32 @@ def test_cookie_statuses_include_and_clear_latest_login_check(tmp_path: Path) ->
     status = cookie_profile_statuses(tmp_path)["youtube"]
     assert status.login_state is None
     assert status.login_checked_at is None
+
+
+def test_douyin_settings_accept_cookie_header_with_profile_domain(tmp_path: Path) -> None:
+    config = ServerConfig(
+        host="127.0.0.1",
+        port=8080,
+        config_dir=tmp_path / "config",
+        download_dir=tmp_path / "downloads",
+        queue_concurrency=1,
+        auth_token=None,
+        static_dir=tmp_path / "static",
+    )
+    config.config_dir.mkdir()
+    config.download_dir.mkdir()
+    router = create_system_router(config, lambda: None)
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/api/settings/cookies")
+
+    response = endpoint(CookieSaveRequest(
+        profile="douyin",
+        content="sessionid=session; ttwid=device",
+    ))
+
+    assert response.cookies_configured is True
+    content = (config.config_dir / "cookies-douyin.txt").read_text(encoding="utf-8")
+    assert ".douyin.com\tTRUE" in content
+    assert "\tsessionid\tsession" in content
 
 
 def test_expired_site_cookie_falls_back_to_usable_default(tmp_path: Path) -> None:

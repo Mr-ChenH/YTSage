@@ -43,7 +43,7 @@ def as_dict_list(value: Any) -> list[dict[str, Any]]:
 
 def is_bilibili_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
-    return host.endswith("bilibili.com") or host.endswith("b23.tv")
+    return any(host == domain or host.endswith(f".{domain}") for domain in ("bilibili.com", "b23.tv"))
 
 
 def _space_list_params(url: str) -> tuple[str, str] | None:

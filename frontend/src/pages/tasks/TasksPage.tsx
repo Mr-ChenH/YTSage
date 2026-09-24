@@ -44,6 +44,15 @@ function taskSource(task: TaskResponse): string {
   }
 }
 
+function isDouyinTask(task: TaskResponse): boolean {
+  try {
+    const host = new URL(task.url).hostname.toLowerCase();
+    return host === 'douyin.com' || host.endsWith('.douyin.com') || host === 'iesdouyin.com' || host.endsWith('.iesdouyin.com');
+  } catch {
+    return false;
+  }
+}
+
 function taskModeLabel(task: TaskResponse, t: T): string {
   const labels: Record<string, TKey> = { video: 'modeVideo', audio: 'modeAudio', subtitles: 'modeSubtitles' };
   return labels[task.mode] ? t(labels[task.mode]) : task.mode;
@@ -169,7 +178,7 @@ function TaskDetail({ task, api, t, onChanged, onCancel, onDelete, onResume, onR
   return <div className={`task-detail task-${task.status}`}>
     <header className="task-detail-header">
       <div className="task-detail-title"><span className={`task-status-icon ${statusTone(task.status)}`}>{(() => { const Icon = statusIcon(task.status); return <Icon aria-hidden="true" />; })()}</span><div><div className="task-title-row"><h2 title={taskTitle(task)}>{taskTitle(task)}</h2><span className={`badge ${statusTone(task.status)}`}>{statusLabel(task.status, t)}</span></div><p>{monitorContext ? `${monitorContext.label}${monitorContext.preview ? ` · ${monitorContext.preview}` : ''}` : task.progress.status_text || statusLabel(task.status, t)}</p></div></div>
-      <div className="task-actions">{recoverable && <><button className="primary" onClick={() => void runRecovery('resume')} disabled={busyAction !== null}><Play aria-hidden="true" />{busyAction === 'resume' ? t('working') : t('resumeTask')}</button><button onClick={() => void runRecovery('restart')} disabled={busyAction !== null}><RefreshCw aria-hidden="true" />{busyAction === 'restart' ? t('working') : t('restartTask')}</button></>}{active && <button className="danger" onClick={() => void onCancel(task.id)}><Ban aria-hidden="true" />{t('cancel')}</button>}<button onClick={() => void onDelete(task.id)}><Trash2 aria-hidden="true" />{t('deleteRecord')}</button></div>
+      <div className="task-actions">{recoverable && <><button className="primary" onClick={() => void runRecovery('resume')} disabled={busyAction !== null}><Play aria-hidden="true" />{busyAction === 'resume' ? t('working') : t('resumeTask')}</button>{!isDouyinTask(task) && <button onClick={() => void runRecovery('restart')} disabled={busyAction !== null}><RefreshCw aria-hidden="true" />{busyAction === 'restart' ? t('working') : t('restartTask')}</button>}</>}{active && <button className="danger" onClick={() => void onCancel(task.id)}><Ban aria-hidden="true" />{t('cancel')}</button>}<button onClick={() => void onDelete(task.id)}><Trash2 aria-hidden="true" />{t('deleteRecord')}</button></div>
     </header>
 
     <div className="task-detail-progress"><div><strong>{Math.round(percent)}%</strong><span>{counts ? `${counts.completed} / ${counts.total} ${t('taskItems')}` : formatBytes(task.progress.downloaded_bytes)}</span></div><div className="task-progress-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${percent}%` }} /></div></div>

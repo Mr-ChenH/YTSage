@@ -44,6 +44,20 @@ async def test_start_bootstraps_logging_for_existing_monitors_once(tmp_path) -> 
 
 
 @pytest.mark.anyio
+async def test_douyin_monitor_is_rejected_before_analysis(tmp_path) -> None:
+    request = _request()
+    request.url = "https://www.douyin.com/collection/example"
+    request.download_options.url = request.url
+    analyze = Mock()
+    service = PlaylistMonitorService(Storage(tmp_path / "tasks.db"), Mock(), analyze)
+
+    with pytest.raises(ValueError, match="Douyin monitoring is not available"):
+        await service.create(request)
+
+    analyze.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_monitor_downloads_current_selection_then_only_new_entries(tmp_path) -> None:
     first_entries = [PlaylistEntry(index=1, id="one", url="https://example.com/one")]
     updated_entries = [*first_entries, PlaylistEntry(index=2, id="two", url="https://example.com/two")]

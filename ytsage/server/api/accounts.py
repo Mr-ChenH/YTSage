@@ -1,41 +1,122 @@
 from __future__ import annotations
 
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from ..models import AccountCreateRequest, AccountResponse, AccountResourceEntriesResponse, AccountResourceListResponse, AccountUpdateRequest, BilibiliQrPollResponse, BilibiliQrStartRequest, BilibiliQrStartResponse
+from ..providers.base import ProviderError
 from ..providers.bilibili import BilibiliProviderError, _AVATAR_HOST_SUFFIXES, _HEADERS, normalize_image_url
+from ..providers.douyin import _AVATAR_HOST_SUFFIXES as _DOUYIN_AVATAR_HOST_SUFFIXES
+from ..providers.douyin import _HEADERS as _DOUYIN_HEADERS
 from ..services.accounts import AccountConflictError, AccountService
 
 AuthDependency = Callable[..., None]
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+_MAX_IMAGE_REDIRECTS = 3
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
-def _provider_http_error(exc: BilibiliProviderError) -> HTTPException:
+def _provider_http_error(exc: ProviderError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)})
 
 
-def _fetch_bilibili_image(image_url: str) -> Response:
-    image_url = normalize_image_url(image_url) or image_url
+def _validated_image_url(platform: str, image_url: str, suffixes: tuple[str, ...]) -> str:
     parsed = urlparse(image_url)
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https" or not any(host.endswith(suffix) for suffix in _AVATAR_HOST_SUFFIXES):
-        raise HTTPException(status_code=422, detail="Unsupported Bilibili image URL")
     try:
-        upstream = requests.get(image_url, headers=_HEADERS, timeout=15)
-        upstream.raise_for_status()
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Unsupported {platform} image URL") from exc
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or not any(host.endswith(suffix) for suffix in suffixes)
+    ):
+        raise HTTPException(status_code=422, detail=f"Unsupported {platform} image URL")
+    return image_url
+
+
+def _read_bounded_image(upstream: object) -> bytes:
+    content_length = getattr(upstream, "headers", {}).get("Content-Length")
+    try:
+        if content_length is not None and int(content_length) > _MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=502, detail="Platform image response is too large")
+    except ValueError:
+        pass
+    iterator = getattr(upstream, "iter_content", None)
+    chunks = iterator(chunk_size=64 * 1024) if callable(iterator) else (getattr(upstream, "content", b""),)
+    try:
+        chunks = iter(chunks)
+    except TypeError:
+        chunks = iter((getattr(upstream, "content", b""),))
+    body = bytearray()
+    for chunk in chunks:
+        if not chunk:
+            continue
+        body.extend(chunk)
+        if len(body) > _MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=502, detail="Platform image response is too large")
+    return bytes(body)
+
+
+def _fetch_platform_image(platform: str, image_url: str) -> Response:
+    if platform == "bilibili":
+        image_url = normalize_image_url(image_url) or image_url
+        suffixes = _AVATAR_HOST_SUFFIXES
+        request_headers = _HEADERS
+    elif platform == "douyin":
+        parsed_input = urlparse(image_url)
+        if parsed_input.scheme == "http":
+            image_url = f"https://{parsed_input.netloc}{parsed_input.path}" + (f"?{parsed_input.query}" if parsed_input.query else "")
+        suffixes = _DOUYIN_AVATAR_HOST_SUFFIXES
+        request_headers = _DOUYIN_HEADERS
+    else:
+        raise HTTPException(status_code=422, detail="Unsupported account image platform")
+    current_url = _validated_image_url(platform, image_url, suffixes)
+    upstream = None
+    try:
+        for redirect_count in range(_MAX_IMAGE_REDIRECTS + 1):
+            upstream = requests.get(
+                current_url,
+                headers=request_headers,
+                timeout=15,
+                allow_redirects=False,
+                stream=True,
+            )
+            if upstream.status_code not in _REDIRECT_STATUSES:
+                upstream.raise_for_status()
+                break
+            location = upstream.headers.get("Location")
+            close = getattr(upstream, "close", None)
+            if close:
+                close()
+            if not location or redirect_count == _MAX_IMAGE_REDIRECTS:
+                raise HTTPException(status_code=502, detail=f"Unable to fetch {platform} image")
+            current_url = _validated_image_url(platform, urljoin(current_url, location), suffixes)
+        content_type = upstream.headers.get("Content-Type", "")
+        if not content_type.lower().startswith("image/"):
+            raise HTTPException(status_code=502, detail="Platform image response is not an image")
+        content = _read_bounded_image(upstream)
     except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail="Unable to fetch Bilibili image") from exc
-    content_type = upstream.headers.get("Content-Type", "")
-    if not content_type.lower().startswith("image/"):
-        raise HTTPException(status_code=502, detail="Bilibili image response is not an image")
+        raise HTTPException(status_code=502, detail=f"Unable to fetch {platform} image") from exc
+    finally:
+        close = getattr(upstream, "close", None)
+        if close:
+            close()
     return Response(
-        content=upstream.content,
+        content=content,
         media_type=content_type.split(";", 1)[0],
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+def _fetch_bilibili_image(image_url: str) -> Response:
+    return _fetch_platform_image("bilibili", image_url)
 
 
 def _fetch_avatar(avatar_url: str) -> Response:
@@ -53,7 +134,7 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
     def create_account(request: AccountCreateRequest) -> AccountResponse:
         try:
             return service.create(request)
-        except BilibiliProviderError as exc:
+        except ProviderError as exc:
             raise _provider_http_error(exc) from exc
         except AccountConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -108,15 +189,17 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             raise HTTPException(status_code=404, detail="Account not found") from exc
         if not account.avatar_url:
             raise HTTPException(status_code=404, detail="Account avatar not found")
-        return _fetch_bilibili_image(account.avatar_url)
+        return _fetch_platform_image(account.platform, account.avatar_url)
 
     @router.get("/{account_id}/image", response_model=None)
     def account_image(account_id: str, url: str = Query(max_length=2048)) -> Response:
         try:
-            service.get(account_id)
+            account = service.get(account_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
-        return _fetch_bilibili_image(url)
+        if account.platform not in {"bilibili", "douyin"}:
+            raise HTTPException(status_code=422, detail="Library images are unavailable for this account platform")
+        return _fetch_platform_image(account.platform, url)
 
     @router.patch("/{account_id}", response_model=AccountResponse)
     def update_account(account_id: str, request: AccountUpdateRequest) -> AccountResponse:
@@ -124,7 +207,7 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             return service.update(account_id, request)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
-        except BilibiliProviderError as exc:
+        except ProviderError as exc:
             raise _provider_http_error(exc) from exc
         except AccountConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -137,7 +220,7 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             return service.verify(account_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
-        except BilibiliProviderError as exc:
+        except ProviderError as exc:
             raise _provider_http_error(exc) from exc
         except AccountConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -170,7 +253,7 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             return service.list_resources(account_id, kind, offset, limit)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
-        except BilibiliProviderError as exc:
+        except ProviderError as exc:
             raise _provider_http_error(exc) from exc
         except AccountConflictError as exc:
             raise HTTPException(status_code=424, detail=str(exc)) from exc
@@ -187,7 +270,7 @@ def create_accounts_router(service: AccountService, auth_dependency: AuthDepende
             return service.list_entries(account_id, resource_id, offset, limit, known_total)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Account not found") from exc
-        except BilibiliProviderError as exc:
+        except ProviderError as exc:
             raise _provider_http_error(exc) from exc
         except AccountConflictError as exc:
             raise HTTPException(status_code=424, detail=str(exc)) from exc

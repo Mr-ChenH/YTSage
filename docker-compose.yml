@@ -1,7 +1,6 @@
 services:
   init-permissions:
-    image: xmoli/ytsage:latest
-    build: .
+    image: ghcr.io/mr-chenh/ytsage:latest
     user: "0:0"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -15,8 +14,7 @@ services:
     restart: "no"
 
   ytsage:
-    image: xmoli/ytsage:latest
-    build: .
+    image: ghcr.io/mr-chenh/ytsage:latest
     container_name: ytsage-server
     depends_on:
       init-permissions:

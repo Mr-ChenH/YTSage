@@ -12,7 +12,9 @@ from ..downloads.executor import DownloadExecutor
 from ..downloads.playlist import copy_progress, parse_queue_item, playlist_entries, playlist_entry_filename_template, playlist_item_filename_template
 from ..downloads.process import decode_output_line, terminate_process
 from ..models import CreateTaskRequest, HistoryEntry, PlaylistEntry, TaskEvent, TaskProgress, TaskResponse
+from ..providers.douyin import canonicalize_douyin_video_url
 from .cookies import COOKIE_PROFILES, cookie_file_path, cookie_profile_for_url
+from .douyin_proofs import DouyinDownloadProofStore
 from .files import classify_file
 from .storage import Storage, utc_now
 
@@ -33,13 +35,20 @@ def _playlist_entry_filename_template(template: str, title: str, entry: Playlist
 
 
 class TaskManager:
-    def __init__(self, config: ServerConfig, storage: Storage, account_service: AccountService | None = None) -> None:
+    def __init__(
+        self,
+        config: ServerConfig,
+        storage: Storage,
+        account_service: AccountService | None = None,
+        douyin_proofs: DouyinDownloadProofStore | None = None,
+    ) -> None:
         self.config = config
         self.storage = storage
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.processes: dict[str, asyncio.subprocess.Process] = {}
         self.subscribers: set[asyncio.Queue[TaskEvent]] = set()
         self.account_service = account_service
+        self.douyin_proofs = douyin_proofs or DouyinDownloadProofStore()
         self.executor = DownloadExecutor(config, storage, self.processes, self._publish, account_service)
         self._workers: list[asyncio.Task[Any]] = []
         self._claimed_tasks: set[str] = set()
@@ -67,6 +76,14 @@ class TaskManager:
 
     async def create_task(self, request: CreateTaskRequest) -> TaskResponse:
         request = request.model_copy(deep=True)
+        request_platform = cookie_profile_for_url(request.url)
+        douyin_canonical_url = None
+        if request_platform == "douyin":
+            douyin_canonical_url = canonicalize_douyin_video_url(request.url)
+            if douyin_canonical_url is None:
+                raise ValueError("Douyin downloads currently require a resolved single-video URL.")
+            if request.playlist_entries or request.playlist_items:
+                raise ValueError("Douyin downloads currently support single videos only.")
         if any(not entry.is_available for entry in request.playlist_entries):
             raise ValueError("Unavailable playlist entries cannot be downloaded.")
         if request.cookie_file:
@@ -77,7 +94,7 @@ class TaskManager:
         if request.account_id:
             if self.account_service is None:
                 raise ValueError("Account selection is unavailable.")
-            expected_platform = cookie_profile_for_url(request.url)
+            expected_platform = request_platform
             self.account_service.resolve_cookie_file(request.account_id, expected_platform)
             expandable = any(entry.entry_type in {"multipart_video", "favorite_collection"} for entry in request.playlist_entries)
             if expandable:
@@ -91,6 +108,10 @@ class TaskManager:
                 request.playlist_entries = [entry for entry in expanded_entries if entry.is_available]
                 if not request.playlist_entries:
                     raise ValueError("The selected Bilibili collection contains no downloadable videos.")
+        if douyin_canonical_url is not None:
+            self.douyin_proofs.consume(request.douyin_download_proof, douyin_canonical_url, request.account_id)
+            request.url = douyin_canonical_url
+            request.douyin_download_proof = None
         task_id = uuid.uuid4().hex
         task = self.storage.create_task(task_id, request)
         await self.queue.put(task_id)

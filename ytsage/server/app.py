@@ -24,6 +24,7 @@ from .services import analyzer
 from .services.accounts import AccountService
 from .services.auth import require_auth
 from .services.dependencies import ensure_runtime_dependencies
+from .services.douyin_proofs import DouyinDownloadProofStore
 from .services.playlist_monitor import PlaylistMonitorService
 from .services.storage import Storage
 from .services.task_manager import TaskManager
@@ -50,16 +51,18 @@ def create_app() -> FastAPI:
     config = load_config()
     storage = Storage(config.database_path)
     account_service = AccountService(config.config_dir, storage)
-    manager = TaskManager(config, storage, account_service)
+    douyin_proofs = DouyinDownloadProofStore()
+    manager = TaskManager(config, storage, account_service, douyin_proofs)
     monitor_service = PlaylistMonitorService(
         storage,
         manager,
         lambda request: analyzer.analyze(request, config_dir=config.config_dir, account_service=account_service),
     )
-    app = FastAPI(title="YTSage Server", version="5.2.0-server", lifespan=lifespan)
+    app = FastAPI(title="YTSage Server", version="5.5.0-server", lifespan=lifespan)
     app.state.config = config
     app.state.storage = storage
     app.state.account_service = account_service
+    app.state.douyin_download_proofs = douyin_proofs
     app.state.task_manager = manager
     app.state.monitor_service = monitor_service
 
@@ -68,7 +71,7 @@ def create_app() -> FastAPI:
 
     app.include_router(create_system_router(config, auth_dependency))
     app.include_router(create_accounts_router(account_service, auth_dependency))
-    app.include_router(create_analysis_router(config, account_service, auth_dependency))
+    app.include_router(create_analysis_router(config, account_service, auth_dependency, douyin_proofs))
     app.include_router(create_tasks_router(config, storage, manager, auth_dependency))
     app.include_router(create_monitors_router(monitor_service, auth_dependency))
     app.include_router(create_files_router(config, auth_dependency))
@@ -108,7 +111,7 @@ app = create_app()
 
 def main() -> None:
     config = load_config()
-    server_config = uvicorn.Config("ytsage.server.app:app", host=config.host, port=config.port)
+    server_config = uvicorn.Config("ytsage.server.app:app", host=config.host, port=config.port, access_log=False)
     QuietSignalServer(server_config).run()
 
 

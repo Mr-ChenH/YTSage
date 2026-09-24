@@ -14,7 +14,9 @@ from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 
 from ..models import AccountCreateRequest, AccountResponse, AccountResource, AccountResourceEntriesResponse, AccountResourceListResponse, AccountUpdateRequest, BilibiliQrPollResponse, BilibiliQrStartRequest, BilibiliQrStartResponse, PlatformAccount, PlaylistEntry
+from ..providers.base import AccountProvider, PlatformIdentity, ProviderError
 from ..providers.bilibili import BilibiliProvider, BilibiliProviderError, BilibiliQrSession
+from ..providers.douyin import DouyinProvider
 from .cookies import cookie_profile_status, normalize_cookies
 from .storage import Storage, utc_now
 
@@ -24,28 +26,51 @@ class AccountConflictError(ValueError):
 
 
 class AccountService:
-    def __init__(self, config_dir: Path, storage: Storage, bilibili: BilibiliProvider | None = None) -> None:
+    def __init__(
+        self,
+        config_dir: Path,
+        storage: Storage,
+        bilibili: BilibiliProvider | None = None,
+        douyin: DouyinProvider | None = None,
+        providers: dict[str, AccountProvider] | None = None,
+    ) -> None:
         self.config_dir = config_dir
         self.storage = storage
         self.accounts_dir = config_dir / "accounts"
         self.bilibili = bilibili or BilibiliProvider()
+        self.douyin = douyin or DouyinProvider()
+        self.providers: dict[str, AccountProvider] = {
+            "bilibili": self.bilibili,
+            "douyin": self.douyin,
+            **(providers or {}),
+        }
         self._qr_challenges: dict[str, tuple[BilibiliQrSession, BilibiliQrStartRequest]] = {}
         self._refresh_locks: dict[str, threading.Lock] = {}
+        self._resource_locks: dict[str, threading.Lock] = {}
+        self._resource_locks_guard = threading.Lock()
         self._maintenance_runner: asyncio.Task[None] | None = None
+        self._started = False
 
     async def start(self) -> None:
+        await self._warm_douyin_accounts()
+        self._started = True
         if self._maintenance_runner is None:
             self._maintenance_runner = asyncio.create_task(self._maintenance_loop())
 
     async def stop(self) -> None:
-        if self._maintenance_runner is None:
-            return
-        self._maintenance_runner.cancel()
-        await asyncio.gather(self._maintenance_runner, return_exceptions=True)
-        self._maintenance_runner = None
+        self._started = False
+        if self._maintenance_runner is not None:
+            self._maintenance_runner.cancel()
+            await asyncio.gather(self._maintenance_runner, return_exceptions=True)
+            self._maintenance_runner = None
+        for provider in self.providers.values():
+            close = getattr(provider, "close", None)
+            if close:
+                close()
 
     def create(self, request: AccountCreateRequest) -> AccountResponse:
-        normalized = normalize_cookies(request.cookie_content)
+        provider = self._provider(request.platform)
+        normalized = normalize_cookies(request.cookie_content, self._cookie_domain(provider, request.platform))
         if normalized is None:
             raise ValueError("Cookie data is required.")
         account_id = uuid.uuid4().hex
@@ -55,19 +80,25 @@ class AccountService:
         target = directory / "cookies.txt"
         try:
             self._write_cookie_file(temporary, normalized)
-            identity = self.bilibili.verify(temporary)
-            duplicate = next((item for item in self.storage.list_accounts(request.platform) if item.external_id == identity.external_id), None)
-            if duplicate:
-                raise AccountConflictError("This Bilibili identity is already configured.")
+            identity, state, verification_error = self._verify_import(provider, temporary)
+            if identity is not None:
+                self._ensure_identity_available(request.platform, identity.external_id)
             make_default = request.make_default or not self.storage.list_accounts(request.platform)
             account = self.storage.create_account(account_id, request.platform, request.label.strip(), f"accounts/{account_id}/cookies.txt", make_default)
             temporary.replace(target)
-            account = self.storage.update_account(
-                account.id, external_id=identity.external_id, display_name=identity.display_name,
-                avatar_url=identity.avatar_url, vip_type=identity.vip_type, state="valid",
-                login_method="cookie", auto_refresh=False, last_refresh_error=None,
-                last_verified_at=utc_now(), last_error=None,
-            )
+            fields: dict[str, object] = {
+                "state": state,
+                "login_method": "cookie",
+                "auto_refresh": False,
+                "last_refresh_error": None,
+                "last_verified_at": utc_now(),
+                "last_error": verification_error,
+            }
+            if identity is not None:
+                fields.update(self._identity_fields(identity))
+            account = self.storage.update_account(account.id, **fields)
+            if self._started:
+                self._warm_douyin_account(account)
             return self.response(account)
         except sqlite3.IntegrityError as exc:
             shutil.rmtree(directory, ignore_errors=True)
@@ -101,46 +132,66 @@ class AccountService:
         if request.make_default is not None:
             fields["is_default"] = request.make_default
         if request.cookie_content is not None:
-            normalized = normalize_cookies(request.cookie_content)
+            provider = self._provider(account.platform)
+            normalized = normalize_cookies(request.cookie_content, self._cookie_domain(provider, account.platform))
             if normalized is None:
                 raise ValueError("Cookie data is required.")
             target = self.resolve_cookie_file(account_id, account.platform, require_usable=False)
             temporary = target.with_suffix(".tmp")
             self._write_cookie_file(temporary, normalized)
             try:
-                identity = self.bilibili.verify(temporary)
-                duplicate = next((item for item in self.storage.list_accounts(account.platform) if item.id != account.id and item.external_id == identity.external_id), None)
-                if duplicate:
-                    raise AccountConflictError("This Bilibili identity is already configured.")
+                identity, state, verification_error = self._verify_import(provider, temporary)
+                if identity is not None:
+                    self._ensure_identity_available(account.platform, identity.external_id, exclude_account_id=account.id)
                 temporary.replace(target)
                 (target.parent / "refresh-token.txt").unlink(missing_ok=True)
-                fields.update(external_id=identity.external_id, display_name=identity.display_name, avatar_url=identity.avatar_url, vip_type=identity.vip_type, state="valid", login_method="cookie", auto_refresh=False, last_refresh_at=None, last_refresh_check_at=None, last_refresh_error=None, last_verified_at=utc_now(), last_error=None)
+                fields.update(
+                    state=state,
+                    login_method="cookie",
+                    auto_refresh=False,
+                    last_refresh_at=None,
+                    last_refresh_check_at=None,
+                    last_refresh_error=None,
+                    last_verified_at=utc_now(),
+                    last_error=verification_error,
+                )
+                if identity is not None:
+                    fields.update(self._identity_fields(identity))
+                else:
+                    fields.update(external_id=None, display_name=None, avatar_url=None, vip_type=None)
             finally:
                 temporary.unlink(missing_ok=True)
         try:
-            return self.response(self.storage.update_account(account_id, **fields))
+            updated = self.storage.update_account(account_id, **fields)
+            if self._started and request.cookie_content is not None:
+                self._warm_douyin_account(updated)
+            return self.response(updated)
         except sqlite3.IntegrityError as exc:
             raise AccountConflictError("An account with this label already exists.") from exc
 
     def verify(self, account_id: str) -> AccountResponse:
         account = self.storage.get_account(account_id)
+        provider = self._provider(account.platform)
         cookie_file = self.resolve_cookie_file(account_id, account.platform, require_usable=False)
         status = cookie_profile_status(cookie_file)
         if not status.usable:
             state = "expired" if status.state == "expired" else "invalid"
             return self.response(self.storage.update_account(account_id, state=state, last_verified_at=utc_now(), last_error="Cookie data is expired or invalid."))
         try:
-            identity = self.bilibili.verify(cookie_file)
-        except BilibiliProviderError as exc:
+            if hasattr(provider, "validate_cookie_file"):
+                provider.validate_cookie_file(cookie_file)
+            identity = provider.verify(cookie_file)
+        except ProviderError as exc:
+            if getattr(provider, "allow_unverified_import", False) and exc.code != "account_login_invalid":
+                return self.response(self.storage.update_account(
+                    account_id, state="unknown", last_verified_at=utc_now(), last_error=str(exc),
+                ))
             state = "invalid" if exc.code == "account_login_invalid" else "unknown"
             self.storage.update_account(account_id, state=state, last_verified_at=utc_now(), last_error=str(exc))
             raise
-        duplicate = next((item for item in self.storage.list_accounts(account.platform) if item.id != account.id and item.external_id == identity.external_id), None)
-        if duplicate:
-            raise AccountConflictError("This Bilibili identity is already configured.")
+        self._ensure_identity_available(account.platform, identity.external_id, exclude_account_id=account.id)
         return self.response(self.storage.update_account(
-            account_id, external_id=identity.external_id, display_name=identity.display_name,
-            avatar_url=identity.avatar_url, vip_type=identity.vip_type, state="valid",
+            account_id, **self._identity_fields(identity), state="valid",
             last_verified_at=utc_now(), last_error=None,
         ))
 
@@ -309,7 +360,8 @@ class AccountService:
         if expected_platform and account.platform != expected_platform:
             raise AccountConflictError("The selected account does not match this platform.")
         if require_usable and account.state in {"invalid", "expired"}:
-            raise AccountConflictError("The selected Bilibili account login is invalid. Replace its cookies and verify the account again.")
+            platform_name = "Bilibili" if account.platform == "bilibili" else "Douyin"
+            raise AccountConflictError(f"The selected {platform_name} account login is invalid. Replace its cookies and verify the account again.")
         root = self.accounts_dir.resolve()
         path = (self.config_dir / account.cookie_filename).resolve()
         if root not in path.parents:
@@ -321,11 +373,16 @@ class AccountService:
 
     def list_resources(self, account_id: str, kind: str, offset: int, limit: int) -> AccountResourceListResponse:
         account = self.storage.get_account(account_id)
+        provider = self._provider(account.platform)
+        operation = getattr(provider, "list_resources", None)
+        if operation is None:
+            raise ProviderError("resource_not_found", "This account provider does not support library browsing.", 404)
+        lock = self._resource_lock(account_id)
         try:
-            return self.bilibili.list_resources(account, self.resolve_cookie_file(account_id, "bilibili"), kind, offset, limit)
-        except BilibiliProviderError as exc:
-            if exc.code == "account_login_invalid":
-                self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
+            with lock:
+                return operation(account, self.resolve_cookie_file(account_id, account.platform), kind, offset, limit)
+        except ProviderError as exc:
+            self._record_provider_error(account_id, exc)
             raise
 
     def list_entries(
@@ -337,8 +394,14 @@ class AccountService:
         known_total: int | None = None,
     ) -> AccountResourceEntriesResponse:
         account = self.storage.get_account(account_id)
+        provider = self._provider(account.platform)
+        operation = getattr(provider, "list_entries", None)
+        if operation is None:
+            raise ProviderError("resource_not_found", "This account provider does not support library browsing.", 404)
+        lock = self._resource_lock(account_id)
         try:
-            result = self.bilibili.list_entries(account, self.resolve_cookie_file(account_id, "bilibili"), resource_id, offset, limit)
+            with lock:
+                result = operation(account, self.resolve_cookie_file(account_id, account.platform), resource_id, offset, limit)
             if known_total is not None and known_total > result.page.total:
                 total = known_total
                 result = result.model_copy(update={
@@ -349,10 +412,17 @@ class AccountService:
                     }),
                 })
             return result
-        except BilibiliProviderError as exc:
-            if exc.code == "account_login_invalid":
-                self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
+        except ProviderError as exc:
+            self._record_provider_error(account_id, exc)
             raise
+
+    def _resource_lock(self, account_id: str) -> threading.Lock:
+        with self._resource_locks_guard:
+            return self._resource_locks.setdefault(account_id, threading.Lock())
+
+    def _record_provider_error(self, account_id: str, exc: ProviderError) -> None:
+        if exc.code == "account_login_invalid":
+            self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
 
     def list_all_entries(self, account_id: str, resource_id: str) -> tuple[AccountResource, list[PlaylistEntry]]:
         account = self.storage.get_account(account_id)
@@ -380,6 +450,54 @@ class AccountService:
                 self.storage.update_account(account_id, state="invalid", last_verified_at=utc_now(), last_error=str(exc))
             raise
 
+    def _provider(self, platform: str) -> AccountProvider:
+        provider = self.providers.get(platform)
+        if provider is None:
+            raise AccountConflictError(f"Unsupported account platform: {platform}")
+        return provider
+
+    @staticmethod
+    def _cookie_domain(provider: AccountProvider, platform: str) -> str:
+        return getattr(provider, "cookie_domain", f".{platform}.com")
+
+    def _verify_import(
+        self,
+        provider: AccountProvider,
+        cookie_file: Path,
+    ) -> tuple[PlatformIdentity | None, str, str | None]:
+        try:
+            if hasattr(provider, "validate_cookie_file"):
+                provider.validate_cookie_file(cookie_file)
+            return provider.verify(cookie_file), "valid", None
+        except ProviderError as exc:
+            if not getattr(provider, "allow_unverified_import", False) or exc.code == "account_login_invalid":
+                raise
+            return None, "unknown", str(exc)
+
+    def _ensure_identity_available(
+        self,
+        platform: str,
+        external_id: str,
+        *,
+        exclude_account_id: str | None = None,
+    ) -> None:
+        duplicate = next((
+            item for item in self.storage.list_accounts(platform)
+            if item.id != exclude_account_id and item.external_id == external_id
+        ), None)
+        if duplicate:
+            platform_name = "Bilibili" if platform == "bilibili" else "Douyin"
+            raise AccountConflictError(f"This {platform_name} identity is already configured.")
+
+    @staticmethod
+    def _identity_fields(identity: PlatformIdentity) -> dict[str, object]:
+        return {
+            "external_id": identity.external_id,
+            "display_name": identity.display_name,
+            "avatar_url": identity.avatar_url,
+            "vip_type": identity.vip_type,
+        }
+
     def response(self, account: PlatformAccount) -> AccountResponse:
         status = cookie_profile_status(self.resolve_cookie_file(account.id, account.platform, require_usable=False))
         return AccountResponse(
@@ -392,6 +510,29 @@ class AccountService:
             last_verified_at=account.last_verified_at, last_error=account.last_error,
             created_at=account.created_at, updated_at=account.updated_at,
         )
+
+    async def _warm_douyin_accounts(self) -> None:
+        try:
+            accounts = [
+                account for account in self.storage.list_accounts("douyin")
+                if account.state not in {"invalid", "expired"}
+            ]
+        except Exception:
+            return
+        await asyncio.gather(
+            *(asyncio.to_thread(self._warm_douyin_account, account) for account in accounts),
+            return_exceptions=True,
+        )
+
+    def _warm_douyin_account(self, account: PlatformAccount) -> None:
+        warm = getattr(self.douyin, "warm", None)
+        if warm is None or account.platform != "douyin" or account.state in {"invalid", "expired"}:
+            return
+        try:
+            cookie_file = self.resolve_cookie_file(account.id, "douyin")
+            warm(account, cookie_file)
+        except Exception:
+            pass
 
     async def _maintenance_loop(self) -> None:
         while True:

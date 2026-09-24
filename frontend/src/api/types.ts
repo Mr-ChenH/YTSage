@@ -11,6 +11,8 @@ export interface HealthResponse {
   ffmpeg: string;
   queue_concurrency: number;
   auth_configured: boolean;
+  douyin_browser_available: boolean;
+  douyin_browser_engine: string;
 }
 
 export interface DependencyStatus {
@@ -65,9 +67,9 @@ export interface CookieSaveResponse {
   status?: CookieProfileStatus | null;
 }
 
-export type Platform = 'bilibili';
+export type Platform = 'bilibili' | 'douyin';
 export type AccountState = 'valid' | 'invalid' | 'unknown' | 'expired';
-export type AccountResourceType = 'created_favorite' | 'collected_favorite' | 'watch_later' | 'collection' | 'series';
+export type AccountResourceType = 'created_favorite' | 'collected_favorite' | 'watch_later' | 'collection' | 'series' | 'douyin_works' | 'douyin_favorites' | 'douyin_collections' | 'douyin_collection';
 
 export interface PlatformAccount {
   id: string;
@@ -208,6 +210,7 @@ export interface AnalyzeResponse {
   formats: FormatInfo[];
   subtitles: SubtitleInfo[];
   raw: Record<string, unknown>;
+  douyin_download_proof?: string | null;
 }
 
 export interface CreateTaskRequest {
@@ -227,6 +230,7 @@ export interface CreateTaskRequest {
   concurrent_fragments?: number | null;
   cookie_file?: string | null;
   account_id?: string | null;
+  douyin_download_proof?: string | null;
   playlist_items?: string | null;
   playlist_title?: string | null;
   playlist_entries: PlaylistEntry[];

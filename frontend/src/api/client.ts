@@ -26,10 +26,12 @@ import type {
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -52,21 +54,25 @@ function headers(token: string, json = false): HeadersInit {
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let code: string | undefined;
     const text = await response.text();
     if (text) {
       try {
         const body = JSON.parse(text) as { detail?: unknown };
         if (body.detail) {
           if (typeof body.detail === 'string') message = body.detail;
-          else if (typeof body.detail === 'object' && body.detail && 'message' in body.detail) message = String((body.detail as { message: unknown }).message);
-          else message = JSON.stringify(body.detail);
+          else if (typeof body.detail === 'object' && body.detail) {
+            if ('message' in body.detail) message = String((body.detail as { message: unknown }).message);
+            else message = JSON.stringify(body.detail);
+            if ('code' in body.detail && typeof (body.detail as { code: unknown }).code === 'string') code = (body.detail as { code: string }).code;
+          } else message = JSON.stringify(body.detail);
         }
         else message = text;
       } catch {
         message = text;
       }
     }
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, message, code);
   }
   return response.json() as Promise<T>;
 }
