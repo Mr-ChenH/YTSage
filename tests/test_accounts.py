@@ -172,6 +172,8 @@ def test_bilibili_cookie_refresh_check_reads_mozilla_cookie_jar(tmp_path: Path):
 
     assert required is False
     assert timestamp == 123456
+    assert isinstance(get.call_args.kwargs["cookies"], requests.cookies.RequestsCookieJar)
+    assert get.call_args.kwargs["cookies"].get("bili_jct") == "test-csrf"
     assert get.call_args.kwargs["params"]["csrf"] == "test-csrf"
 
 

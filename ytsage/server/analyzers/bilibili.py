@@ -63,14 +63,17 @@ def _json_response(response: requests.Response) -> dict[str, Any] | None:
         return None
 
 
-def _load_cookie_jar(cookie_file: Path | None) -> http.cookiejar.MozillaCookieJar | None:
+def _load_cookie_jar(cookie_file: Path | None) -> requests.cookies.RequestsCookieJar | None:
     if cookie_file is None or not cookie_file.is_file():
         return None
-    jar = http.cookiejar.MozillaCookieJar(str(cookie_file))
+    source = http.cookiejar.MozillaCookieJar(str(cookie_file))
     try:
-        jar.load(ignore_discard=True, ignore_expires=True)
+        source.load(ignore_discard=True, ignore_expires=True)
     except Exception:
         return None
+    jar = requests.cookies.RequestsCookieJar()
+    for cookie in source:
+        jar.set_cookie(cookie)
     return jar
 
 
