@@ -736,6 +736,7 @@ def test_chromium_capability_requires_executable_binary(tmp_path: Path):
 def test_chromium_capability_requires_successful_launch_and_caches(tmp_path: Path):
     executable = tmp_path / "chromium"
     executable.write_text("binary", encoding="utf-8")
+    executable.chmod(0o755)
     clear_chromium_capability_cache()
     runtime = Mock()
     runtime.chromium.executable_path = str(executable)
@@ -753,6 +754,7 @@ def test_chromium_capability_requires_successful_launch_and_caches(tmp_path: Pat
 def test_chromium_capability_closes_successful_probe(tmp_path: Path):
     executable = tmp_path / "chromium"
     executable.write_text("binary", encoding="utf-8")
+    executable.chmod(0o755)
     clear_chromium_capability_cache()
     runtime = Mock()
     runtime.chromium.executable_path = str(executable)
